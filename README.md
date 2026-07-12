@@ -69,14 +69,18 @@ Important:
 - ne committez jamais `.env`
 - ne partagez jamais votre mot de passe d'application
 
-## 5) Verifier la connexion IMAP
+## 5) Tests progressifs (rounds)
+
+### 5.1) Verifier la connexion IMAP (Round 1 / etape 1)
+
+Commande de test:
 
 ```bash
 python -m src.cli index
 ```
 
 Sortie attendue:
-- tableau des derniers mails avec date, expediteur, taille de corps texte, nombre de pieces jointes, objet
+- tableau des derniers mails avec date, expediteur et objet
 
 Exemple valide (Round 1):
 
@@ -97,31 +101,19 @@ Exemple valide (Round 1):
 └──────────────────┴───────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Round 2 (etape 2 de la roadmap):
+### 5.2) Etape 2 / Round 2 - corps texte + pieces jointes
+
+Objectif:
 - `index` recupere aussi le corps texte (parties `text/plain`) et les pieces jointes de base
-- la table affiche maintenant deux colonnes supplementaires:
-	- `Corps (car)` = taille en caracteres du corps texte extrait
-	- `PJ` = nombre de pieces jointes detectees
+- la table affiche deux colonnes supplementaires:
+  - `Corps (car)` = taille en caracteres du corps texte extrait
+  - `PJ` = nombre de pieces jointes detectees
 
 Commande de test Round 2 (20 derniers mails):
 
 ```bash
 python.exe -m src.cli index --limit 20
 ```
-
-## 5.b) Tester l'etape 3 (extraction PDF / DOCX / OCR)
-
-Commande de test:
-
-```bash
-python.exe tests/run_extractor_examples.py
-```
-
-Ce script:
-- genere des fichiers exemples dans `tests/samples`
-- verifie extraction texte DOCX
-- verifie extraction texte PDF
-- verifie OCR image (ou affiche `SKIP` si Tesseract n'est pas installe/configure)
 
 Exemple de sortie Round 2:
 
@@ -150,6 +142,44 @@ Exemple de sortie Round 2:
 │ 2026-07-12 08:06 │ Indeed <donotreply@match.indeed.com>                      │        7449 │  0 │ Chef de Projet CVC - Macro-Lot - H/F - NEO2 Consultant                                                                      │
 │ 2026-07-12 07:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │        9867 │  0 │ CNIL recrute a France                                                                                                       │
 └──────────────────┴───────────────────────────────────────────────────────────┴─────────────┴────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.3) Etape 3 - extraction PDF / DOCX / OCR
+
+Commande de test:
+
+```bash
+python.exe tests/run_extractor_examples.py
+```
+
+Sortie de reference:
+
+```text
+=== Round 3: extraction PDF / DOCX / OCR ===
+[OK] DOCX: contient 'Bonjour depuis DOCX'
+[OK] PDF: contient 'Bonjour PDF exemple'
+[SKIP] OCR: Tesseract non installe ou non configure (TESSERACT_CMD).
+Round 3 OK: extraction PDF/DOCX/OCR validee.
+```
+
+Pourquoi le `SKIP` OCR peut apparaitre:
+- Tesseract n'est pas installe sur la machine
+- Tesseract est installe, mais son executable n'est pas dans le `PATH`
+- le chemin n'est pas renseigne dans la variable `TESSERACT_CMD`
+
+Installation Tesseract (Windows):
+1. Installer Tesseract (par exemple UB Mannheim).
+2. Verifier dans un terminal:
+
+```powershell
+tesseract --version
+```
+
+3. Si la commande n'est pas trouvee, ajouter le dossier d'installation de Tesseract au `PATH`.
+4. Alternative locale projet: renseigner `TESSERACT_CMD` dans `.env`, par exemple:
+
+```env
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
 ## 6) Arborescence
