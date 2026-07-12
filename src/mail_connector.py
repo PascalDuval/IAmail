@@ -23,8 +23,8 @@ class MailSummary:
 def _decode_mime_text(value: bytes | str | None) -> str:
     if value is None:
         return ""
-    if isinstance(value, str):
-        return value
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
 
     parts = decode_header(value)
     decoded_parts: list[str] = []
