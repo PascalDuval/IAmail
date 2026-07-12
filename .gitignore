@@ -29,3 +29,6 @@ Thumbs.db
 
 # Local workspace assets not meant for git
 back/
+
+# Generated test fixtures
+tests/samples/

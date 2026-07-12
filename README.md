@@ -109,6 +109,20 @@ Commande de test Round 2 (20 derniers mails):
 python.exe -m src.cli index --limit 20
 ```
 
+## 5.b) Tester l'etape 3 (extraction PDF / DOCX / OCR)
+
+Commande de test:
+
+```bash
+python.exe tests/run_extractor_examples.py
+```
+
+Ce script:
+- genere des fichiers exemples dans `tests/samples`
+- verifie extraction texte DOCX
+- verifie extraction texte PDF
+- verifie OCR image (ou affiche `SKIP` si Tesseract n'est pas installe/configure)
+
 Exemple de sortie Round 2:
 
 ```text
