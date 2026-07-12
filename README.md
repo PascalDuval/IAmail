@@ -2,6 +2,15 @@
 
 Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre des recherches en langage naturel, en gardant les donnees en local.
 
+Regle generale d'execution:
+- toutes les commandes de ce README doivent etre lancees dans l'environnement virtuel active (`.venv`).
+- sur Windows, si besoin, utilisez explicitement `.\\.venv\\Scripts\\python.exe`.
+
+Pourquoi installer Tesseract des le debut:
+- l'etape 3 repose sur OCR (images/scans).
+- sans Tesseract, le test OCR passe en `SKIP` et vous ne validez pas le round complet.
+- l'installer avant le clone/les tests evite des allers-retours de configuration plus tard.
+
 Etat actuel:
 - setup du projet
 - connexion IMAP Gmail
