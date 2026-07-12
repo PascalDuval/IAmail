@@ -64,9 +64,35 @@ def _get_payload_value(payload: dict[Any, Any], key: str) -> Any:
 
 
 class MailConnector:
-    def __init__(self, host: str = "imap.gmail.com", folder: str = "INBOX") -> None:
+    def __init__(
+        self,
+        host: str = "imap.gmail.com",
+        folder: str = "INBOX",
+        port: int = 993,
+        use_ssl: bool = True,
+    ) -> None:
         self.host = host
         self.folder = folder
+        self.port = port
+        self.use_ssl = use_ssl
+
+    @classmethod
+    def from_env(cls) -> "MailConnector":
+        load_dotenv()
+
+        host = os.getenv("IMAP_HOST", "imap.gmail.com").strip() or "imap.gmail.com"
+        folder = os.getenv("IMAP_FOLDER", "INBOX").strip() or "INBOX"
+
+        raw_port = os.getenv("IMAP_PORT", "993").strip()
+        try:
+            port = int(raw_port)
+        except ValueError as exc:
+            raise ValueError("IMAP_PORT doit etre un entier (ex: 993).") from exc
+
+        ssl_value = os.getenv("IMAP_SSL", "true").strip().lower()
+        use_ssl = ssl_value in {"1", "true", "yes", "on"}
+
+        return cls(host=host, folder=folder, port=port, use_ssl=use_ssl)
 
     def _connect(self) -> IMAPClient:
         load_dotenv()
@@ -76,10 +102,10 @@ class MailConnector:
 
         if not gmail_address or not gmail_app_password:
             raise ValueError(
-                "Variables manquantes: GMAIL_ADDRESS et GMAIL_APP_PASSWORD dans le fichier .env"
+                "Variables manquantes: GMAIL_ADDRESS et GMAIL_APP_PASSWORD (fichier .env)."
             )
 
-        client = IMAPClient(self.host, ssl=True)
+        client = IMAPClient(self.host, port=self.port, ssl=self.use_ssl)
         client.login(gmail_address, gmail_app_password)
         return client
 

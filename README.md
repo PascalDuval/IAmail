@@ -48,7 +48,19 @@ Exemple:
 ```env
 GMAIL_ADDRESS=votre_mail@gmail.com
 GMAIL_APP_PASSWORD=votre_mot_de_passe_application
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_SSL=true
+IMAP_FOLDER=INBOX
 ```
+
+Variables prises en charge:
+- `GMAIL_ADDRESS`: adresse Gmail
+- `GMAIL_APP_PASSWORD`: mot de passe d'application Google
+- `IMAP_HOST`: serveur IMAP (Gmail: `imap.gmail.com`)
+- `IMAP_PORT`: port IMAP (Gmail SSL: `993`)
+- `IMAP_SSL`: `true` ou `false`
+- `IMAP_FOLDER`: dossier a lire (par defaut `INBOX`)
 
 Important:
 - ne committez jamais `.env`

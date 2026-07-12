@@ -36,7 +36,7 @@ def index(
     ),
 ) -> None:
     """Affiche les derniers mails de INBOX (date, expediteur, objet)."""
-    connector = MailConnector(folder="INBOX")
+    connector = MailConnector.from_env()
 
     try:
         messages = connector.list_latest(limit=limit)
