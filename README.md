@@ -2,6 +2,18 @@
 
 Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre des recherches en langage naturel, en gardant les donnees en local.
 
+## Architecture globale
+
+L'architecture du projet suit un pipeline local de bout en bout. Le connecteur IMAP lit les mails Gmail et leurs metadonnees, puis le module d'extraction transforme le contenu des pieces jointes (PDF, DOCX, images OCR) en texte exploitable. Ce contenu est ensuite envoye dans deux couches complementaires: une couche structuree SQLite et une couche semantique vectorielle (ChromaDB, etape suivante).
+
+SQLite joue le role de colonne vertebrale factuelle du systeme. La base stocke des informations explicites et verifiables comme la date, l'expediteur, le sujet, le corps normalise, les pieces jointes et, ensuite, les entites extraites (montants, personnes, themes). Cette couche permet des filtres exacts, des tris temporels, des agregations et des tableaux, ce qui est indispensable pour repondre de maniere fiable aux questions metier sans hallucination.
+
+La couche vectorielle est utile pour la recherche de similarite semantique, mais elle ne remplace pas SQLite. Les deux couches sont combinees par le moteur de requete: SQLite apporte la precision structuree, Chroma apporte le rappel semantique, et le LLM formule la reponse finale uniquement a partir des resultats recuperes.
+
+Le role de ChromaDB est donc de memoriser des vecteurs d'embeddings par morceaux de texte (chunks) pour retrouver des contenus proches en sens, meme quand les mots exacts ne correspondent pas. Cette capacite est essentielle pour des questions comme "prix du gateau chocolat" ou "interactions avec Nam", ou le vocabulaire varie d'un mail a l'autre.
+
+En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, la recherche semantique est geree par `indexer.py`, puis `query_engine.py` orchestre les appels pour produire une reponse via `llm.py`, exposee ensuite dans la CLI et plus tard dans l'interface Streamlit.
+
 ## Prealables (a faire avant le clone)
 
 ### 1) Ollama + modeles
@@ -44,6 +56,18 @@ Si PATH n'est pas disponible, definir dans `.env`:
 ```env
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
+
+### 3) ChromaDB + embeddings (etape 5)
+
+Il n'y a pas d'installeur systeme pour ChromaDB dans ce projet: la dependance Python est deja dans `requirements.txt`. En revanche, il faut bien avoir Ollama actif avec le modele d'embeddings `nomic-embed-text`, car Chroma stocke les vecteurs produits par ce modele.
+
+Verification rapide:
+
+```powershell
+ollama list
+```
+
+Vous devez voir `nomic-embed-text:latest` dans la liste.
 
 Regle generale d'execution:
 - toutes les commandes de ce README doivent etre lancees dans l'environnement virtuel active (`.venv`).
@@ -136,6 +160,8 @@ IMAP_PORT=993
 IMAP_SSL=true
 IMAP_SSL_VERIFY=true
 IMAP_FOLDER=INBOX
+OLLAMA_HOST=http://localhost:11434
+EMBEDDING_MODEL=nomic-embed-text
 ```
 
 Variables prises en charge:
@@ -146,6 +172,8 @@ Variables prises en charge:
 - `IMAP_SSL`: `true` ou `false`
 - `IMAP_SSL_VERIFY`: `true` ou `false` (laisser `true` sauf diagnostic local)
 - `IMAP_FOLDER`: dossier a lire (par defaut `INBOX`)
+- `OLLAMA_HOST`: endpoint Ollama local (par defaut `http://localhost:11434`)
+- `EMBEDDING_MODEL`: modele d'embeddings utilise par Chroma (par defaut `nomic-embed-text`)
 
 Important:
 - ne committez jamais `.env`
@@ -290,6 +318,30 @@ Sortie attendue (exemple):
 [OK] lecture sujet correct
 [OK] lecture uid correct
 Etape 4 OK: schema + insertion + lecture SQLite valides.
+```
+
+### 5.5) Etape 5 - indexation semantique Chroma
+
+Objectif:
+- decouper le texte en chunks
+- generer les embeddings via Ollama (`nomic-embed-text`)
+- persister les chunks dans ChromaDB
+- verifier une requete semantique simple
+
+Commande de test:
+
+```bash
+python.exe tests/run_indexer_examples.py
+```
+
+Sortie attendue (exemple):
+
+```text
+[OK] documents indexes
+[OK] chunks persistes dans Chroma
+[OK] requete semantique retourne des resultats
+[OK] top resultat semantiquement pertinent
+Etape 5 OK: chunking + embeddings + persistance Chroma + requete semantique valides.
 ```
 
 ## 6) Arborescence
