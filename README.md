@@ -8,6 +8,32 @@ Etat actuel:
 - commande CLI `index` pour afficher les 10 derniers mails de INBOX
 - round 2: affichage de la taille du corps texte et du nombre de pieces jointes
 
+## 0) Prerequis avant de cloner le repo
+
+Logiciels a installer:
+- Python 3.11+ (3.11 recommande)
+- Git
+- Tesseract OCR (pour l'etape OCR)
+- Ollama (pour les etapes LLM/embeddings suivantes)
+
+Verifications rapides:
+
+```powershell
+python --version
+git --version
+tesseract --version
+ollama --version
+```
+
+Parametrages Gmail a faire avant les tests IMAP:
+1. Activer la validation en 2 etapes sur le compte Google.
+2. Generer un mot de passe d'application Google.
+3. Activer IMAP dans Gmail (Parametres > Transfert et POP/IMAP).
+
+Important:
+- Si `tesseract --version` echoue, ajoutez Tesseract au `PATH`.
+- Alternative: renseigner `TESSERACT_CMD` dans `.env`.
+
 ## 1) Cloner le projet depuis GitHub
 
 ```bash
@@ -32,6 +58,8 @@ source .venv/bin/activate
 ```
 
 ## 3) Installer les dependances
+
+Activez d'abord l'environnement virtuel (section 2), puis executez:
 
 ```bash
 pip install -r requirements.txt
@@ -71,12 +99,16 @@ Important:
 
 ## 5) Tests progressifs (rounds)
 
+Important pour tous les rounds:
+- lancer les commandes dans l'environnement virtuel active (`.venv`),
+- ou utiliser le binaire explicite: `.\.venv\Scripts\python.exe ...`
+
 ### 5.1) Verifier la connexion IMAP (Round 1 / etape 1)
 
 Commande de test:
 
 ```bash
-python -m src.cli index
+python.exe -m src.cli index
 ```
 
 Sortie attendue:
@@ -158,7 +190,7 @@ Sortie de reference:
 === Round 3: extraction PDF / DOCX / OCR ===
 [OK] DOCX: contient 'Bonjour depuis DOCX'
 [OK] PDF: contient 'Bonjour PDF exemple'
-[SKIP] OCR: Tesseract non installe ou non configure (TESSERACT_CMD).
+[OK] OCR: contient 'OCR'
 Round 3 OK: extraction PDF/DOCX/OCR validee.
 ```
 
