@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import ssl
 from dataclasses import dataclass
 from datetime import datetime
 from email.header import decode_header
 from typing import Any, Iterable
 
+import certifi
 from dotenv import load_dotenv
 from imapclient import IMAPClient
 
@@ -63,6 +65,13 @@ def _get_payload_value(payload: dict[Any, Any], key: str) -> Any:
     return payload.get(bkey)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class MailConnector:
     def __init__(
         self,
@@ -89,10 +98,16 @@ class MailConnector:
         except ValueError as exc:
             raise ValueError("IMAP_PORT doit etre un entier (ex: 993).") from exc
 
-        ssl_value = os.getenv("IMAP_SSL", "true").strip().lower()
-        use_ssl = ssl_value in {"1", "true", "yes", "on"}
+        use_ssl = _env_bool("IMAP_SSL", True)
 
         return cls(host=host, folder=folder, port=port, use_ssl=use_ssl)
+
+    def _build_ssl_context(self, verify_ssl: bool) -> ssl.SSLContext:
+        context = ssl.create_default_context(cafile=certifi.where())
+        if not verify_ssl:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        return context
 
     def _connect(self) -> IMAPClient:
         load_dotenv()
@@ -105,7 +120,24 @@ class MailConnector:
                 "Variables manquantes: GMAIL_ADDRESS et GMAIL_APP_PASSWORD (fichier .env)."
             )
 
-        client = IMAPClient(self.host, port=self.port, ssl=self.use_ssl)
+        verify_ssl = _env_bool("IMAP_SSL_VERIFY", True)
+        ssl_context = self._build_ssl_context(verify_ssl) if self.use_ssl else None
+
+        client_kwargs: dict[str, Any] = {
+            "host": self.host,
+            "port": self.port,
+            "ssl": self.use_ssl,
+        }
+        if ssl_context is not None:
+            client_kwargs["ssl_context"] = ssl_context
+
+        try:
+            client = IMAPClient(**client_kwargs)
+        except TypeError:
+            # Compatibilite defensive si une ancienne version d'imapclient ignore ssl_context.
+            client_kwargs.pop("ssl_context", None)
+            client = IMAPClient(**client_kwargs)
+
         client.login(gmail_address, gmail_app_password)
         return client
 

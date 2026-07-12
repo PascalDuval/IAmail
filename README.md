@@ -51,6 +51,7 @@ GMAIL_APP_PASSWORD=votre_mot_de_passe_application
 IMAP_HOST=imap.gmail.com
 IMAP_PORT=993
 IMAP_SSL=true
+IMAP_SSL_VERIFY=true
 IMAP_FOLDER=INBOX
 ```
 
@@ -60,6 +61,7 @@ Variables prises en charge:
 - `IMAP_HOST`: serveur IMAP (Gmail: `imap.gmail.com`)
 - `IMAP_PORT`: port IMAP (Gmail SSL: `993`)
 - `IMAP_SSL`: `true` ou `false`
+- `IMAP_SSL_VERIFY`: `true` ou `false` (laisser `true` sauf diagnostic local)
 - `IMAP_FOLDER`: dossier a lire (par defaut `INBOX`)
 
 Important:
