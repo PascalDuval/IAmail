@@ -65,6 +65,7 @@ Etat actuel:
 Logiciels a installer:
 - Python 3.11+ (3.11 recommande)
 - Git
+- SQLite (CLI sqlite3 recommande pour verification locale)
 - Tesseract OCR (pour l'etape OCR)
 - Ollama (pour les etapes LLM/embeddings suivantes)
 
@@ -74,6 +75,7 @@ Verifications rapides:
 python --version
 git --version
 tesseract --version
+sqlite3 --version
 ollama --version
 ```
 
@@ -264,6 +266,30 @@ tesseract --version
 
 ```env
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
+
+### 5.4) Etape 4 - stockage structure SQLite
+
+Objectif:
+- creer un schema SQLite (`mails`, `attachments`, `entities`)
+- valider insertion et lecture
+
+Commande de test:
+
+```bash
+python.exe tests/run_structured_store_examples.py
+```
+
+Sortie attendue (exemple):
+
+```text
+[OK] schema contient mails
+[OK] schema contient attachments
+[OK] schema contient entities
+[OK] lecture recent mails non vide
+[OK] lecture sujet correct
+[OK] lecture uid correct
+Etape 4 OK: schema + insertion + lecture SQLite valides.
 ```
 
 ## 6) Arborescence
