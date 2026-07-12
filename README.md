@@ -6,6 +6,7 @@ Etat actuel:
 - setup du projet
 - connexion IMAP Gmail
 - commande CLI `index` pour afficher les 10 derniers mails de INBOX
+- round 2: affichage de la taille du corps texte et du nombre de pieces jointes
 
 ## 1) Cloner le projet depuis GitHub
 
@@ -75,7 +76,7 @@ python -m src.cli index
 ```
 
 Sortie attendue:
-- tableau des derniers mails avec date, expediteur et objet
+- tableau des derniers mails avec date, expediteur, taille de corps texte, nombre de pieces jointes, objet
 
 Exemple valide (Round 1):
 
@@ -95,6 +96,12 @@ Exemple valide (Round 1):
 │ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │ Alternant(e) REDACTEUR ET CREATEUR DE CONTENUS VIDEOS chez Cite internationale universitaire de Paris                  │
 └──────────────────┴───────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+Round 2 (etape 2 de la roadmap):
+- `index` recupere aussi le corps texte (parties `text/plain`) et les pieces jointes de base
+- la table affiche maintenant deux colonnes supplementaires:
+	- `Corps (car)` = taille en caracteres du corps texte extrait
+	- `PJ` = nombre de pieces jointes detectees
 
 ## 6) Arborescence
 

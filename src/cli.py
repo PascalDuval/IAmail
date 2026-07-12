@@ -51,10 +51,18 @@ def index(
     table = Table(title=f"{len(messages)} dernier(s) mail(s) INBOX")
     table.add_column("Date", style="cyan")
     table.add_column("Expediteur", style="green")
+    table.add_column("Corps (car)", style="magenta", justify="right")
+    table.add_column("PJ", style="yellow", justify="right")
     table.add_column("Objet", style="white")
 
     for mail in messages:
-        table.add_row(_format_date(mail.date), mail.sender, mail.subject)
+        table.add_row(
+            _format_date(mail.date),
+            mail.sender,
+            str(mail.body_size),
+            str(mail.attachment_count),
+            mail.subject,
+        )
 
     console.print(table)
 

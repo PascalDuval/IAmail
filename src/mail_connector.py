@@ -4,7 +4,9 @@ import os
 import ssl
 from dataclasses import dataclass
 from datetime import datetime
+from email import message_from_bytes
 from email.header import decode_header
+from email.message import Message
 from typing import Any, Iterable
 
 import certifi
@@ -18,6 +20,8 @@ class MailSummary:
     subject: str
     sender: str
     date: datetime | None
+    body_size: int
+    attachment_count: int
 
 
 def _decode_mime_text(value: bytes | str | None) -> str:
@@ -70,6 +74,51 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _decode_text_part(part: Message) -> str:
+    payload = part.get_payload(decode=True)
+    if payload is None:
+        raw_payload = part.get_payload()
+        if isinstance(raw_payload, str):
+            return raw_payload
+        return ""
+
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return payload.decode(charset, errors="replace")
+    except LookupError:
+        return payload.decode("utf-8", errors="replace")
+
+
+def _extract_body_and_attachment_count(raw_message: bytes) -> tuple[str, int]:
+    parsed = message_from_bytes(raw_message)
+    text_chunks: list[str] = []
+    attachment_count = 0
+
+    for part in parsed.walk():
+        content_type = part.get_content_type().lower()
+        disposition = (part.get_content_disposition() or "").lower()
+        filename = part.get_filename()
+
+        if disposition == "attachment" or filename:
+            attachment_count += 1
+            continue
+
+        if content_type == "text/plain" and disposition != "attachment":
+            text = _decode_text_part(part).strip()
+            if text:
+                text_chunks.append(text)
+
+    return "\n\n".join(text_chunks), attachment_count
+
+
+def _get_first_payload_value(payload: dict[Any, Any], keys: list[str]) -> Any:
+    for key in keys:
+        value = _get_payload_value(payload, key)
+        if value is not None:
+            return value
+    return None
 
 
 class MailConnector:
@@ -153,7 +202,7 @@ class MailConnector:
                 return []
 
             latest_uids = sorted(uids)[-limit:]
-            fetched = client.fetch(latest_uids, ["ENVELOPE"])
+            fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
 
         return self._build_summaries(fetched, latest_uids)
 
@@ -168,6 +217,15 @@ class MailConnector:
             if envelope is None:
                 continue
 
+            raw_message = _get_first_payload_value(
+                payload,
+                ["BODY[]", "BODY.PEEK[]", "RFC822"],
+            )
+            body_text = ""
+            attachment_count = 0
+            if isinstance(raw_message, bytes):
+                body_text, attachment_count = _extract_body_and_attachment_count(raw_message)
+
             subject = _decode_mime_text(getattr(envelope, "subject", None)) or "(sans objet)"
             sender_list = getattr(envelope, "from_", None) or []
             sender = _extract_sender(sender_list[0] if sender_list else None)
@@ -179,6 +237,8 @@ class MailConnector:
                     subject=subject,
                     sender=sender,
                     date=date,
+                    body_size=len(body_text),
+                    attachment_count=attachment_count,
                 )
             )
 
