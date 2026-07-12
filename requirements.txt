@@ -1,0 +1,12 @@
+imapclient
+python-dotenv
+ollama
+chromadb
+pdfplumber
+python-docx
+pytesseract
+Pillow
+pandas
+typer
+rich
+streamlit

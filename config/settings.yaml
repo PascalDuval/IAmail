@@ -1,0 +1,11 @@
+gmail:
+  folders:
+    - INBOX
+
+ollama:
+  llm_model: mistral
+  embedding_model: nomic-embed-text
+
+index:
+  chunk_size: 1200
+  chunk_overlap: 120

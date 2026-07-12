@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Environments and secrets
+.env
+.venv/
+venv/
+
+# Local data and indexes
+data/
+*.db
+chroma_db/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local workspace assets not meant for git
+back/
