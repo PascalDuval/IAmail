@@ -2,6 +2,49 @@
 
 Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre des recherches en langage naturel, en gardant les donnees en local.
 
+## Prealables (a faire avant le clone)
+
+### 1) Ollama + modeles
+
+1. Installer Ollama (Windows): https://ollama.com/download
+2. Verifier:
+
+```powershell
+ollama --version
+```
+
+3. Telecharger les modeles:
+
+```powershell
+ollama pull mistral
+ollama pull nomic-embed-text
+```
+
+4. Tester:
+
+```powershell
+ollama run mistral "dis bonjour"
+```
+
+Ollama tourne en local sur http://localhost:11434.
+
+### 2) Tesseract OCR (Windows)
+
+1. Installer Tesseract (UB Mannheim): https://github.com/UB-Mannheim/tesseract/wiki
+2. Pendant l'installation, ajouter la langue French.
+3. Ajouter le dossier d'installation au PATH (souvent C:\Program Files\Tesseract-OCR).
+4. Ouvrir un nouveau terminal puis verifier:
+
+```powershell
+tesseract --version
+```
+
+Si PATH n'est pas disponible, definir dans `.env`:
+
+```env
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
+
 Regle generale d'execution:
 - toutes les commandes de ce README doivent etre lancees dans l'environnement virtuel active (`.venv`).
 - sur Windows, si besoin, utilisez explicitement `.\\.venv\\Scripts\\python.exe`.
