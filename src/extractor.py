@@ -6,6 +6,7 @@ from pathlib import Path
 import pdfplumber
 import pytesseract
 from docx import Document
+from dotenv import load_dotenv
 from PIL import Image
 
 
@@ -23,6 +24,7 @@ SUPPORTED_EXTENSIONS = {
 
 
 def _configure_tesseract_from_env() -> None:
+	load_dotenv()
 	tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
 	if tesseract_cmd:
 		pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
