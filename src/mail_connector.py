@@ -16,6 +16,10 @@ from imapclient import IMAPClient
 from .structured_store import MailRecord
 
 
+MAX_SAFE_FETCH_LIMIT = 10_000
+DEFAULT_FETCH_BATCH_SIZE = 200
+
+
 @dataclass
 class MailSummary:
     uid: int
@@ -158,6 +162,22 @@ def _get_first_payload_value(payload: dict[Any, Any], keys: list[str]) -> Any:
     return None
 
 
+def _extract_message_size(payload: dict[Any, Any]) -> int:
+    raw_size = _get_first_payload_value(payload, ["RFC822.SIZE"])
+    if raw_size is None:
+        return 0
+    try:
+        return int(raw_size)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _iter_uid_batches(uids: list[int], batch_size: int) -> Iterable[list[int]]:
+    safe_batch_size = max(1, int(batch_size))
+    for start in range(0, len(uids), safe_batch_size):
+        yield uids[start : start + safe_batch_size]
+
+
 class MailConnector:
     def __init__(
         self,
@@ -165,11 +185,13 @@ class MailConnector:
         folder: str = "INBOX",
         port: int = 993,
         use_ssl: bool = True,
+        fetch_batch_size: int = DEFAULT_FETCH_BATCH_SIZE,
     ) -> None:
         self.host = host
         self.folder = folder
         self.port = port
         self.use_ssl = use_ssl
+        self.fetch_batch_size = max(1, int(fetch_batch_size))
 
     @classmethod
     def from_env(cls) -> "MailConnector":
@@ -186,7 +208,19 @@ class MailConnector:
 
         use_ssl = _env_bool("IMAP_SSL", True)
 
-        return cls(host=host, folder=folder, port=port, use_ssl=use_ssl)
+        raw_batch_size = os.getenv("IMAP_FETCH_BATCH_SIZE", str(DEFAULT_FETCH_BATCH_SIZE)).strip()
+        try:
+            fetch_batch_size = int(raw_batch_size)
+        except ValueError as exc:
+            raise ValueError("IMAP_FETCH_BATCH_SIZE doit etre un entier (ex: 200).") from exc
+
+        return cls(
+            host=host,
+            folder=folder,
+            port=port,
+            use_ssl=use_ssl,
+            fetch_batch_size=fetch_batch_size,
+        )
 
     def _build_ssl_context(self, verify_ssl: bool) -> ssl.SSLContext:
         context = ssl.create_default_context(cafile=certifi.where())
@@ -233,77 +267,95 @@ class MailConnector:
             raise ValueError("Au moins un UID doit etre fourni.")
         return normalized_uids
 
-    def list_latest(self, limit: int = 10) -> list[MailSummary]:
-        if limit <= 0:
+    def _validate_limit(self, limit: int, min_limit: int = 1, max_limit: int = MAX_SAFE_FETCH_LIMIT) -> int:
+        if limit < min_limit:
+            raise ValueError(f"La limite doit etre comprise entre {min_limit} et {max_limit}.")
+        if limit > max_limit:
+            raise ValueError(
+                f"Limite trop elevee ({limit}). Maximum autorise: {max_limit} pour un fetch IMAP safe."
+            )
+        return limit
+
+    def _fetch_latest_uids(self, client: IMAPClient, folder: str, limit: int) -> list[int]:
+        client.select_folder(folder, readonly=True)
+        uids = client.search(["ALL"])
+        if not uids:
             return []
+        return sorted(uids)[-limit:]
+
+    def _fetch_in_batches(self, client: IMAPClient, uids: list[int], data_items: list[str]) -> dict[Any, dict[Any, Any]]:
+        fetched: dict[Any, dict[Any, Any]] = {}
+        for uid_batch in _iter_uid_batches(uids, self.fetch_batch_size):
+            batch_payload = client.fetch(uid_batch, data_items)
+            fetched.update(batch_payload)
+        return fetched
+
+    def list_latest(self, limit: int = 10) -> list[MailSummary]:
+        safe_limit = self._validate_limit(limit)
 
         with self._connect() as client:
-            client.select_folder(self.folder, readonly=True)
-            uids = client.search(["ALL"])
-
-            if not uids:
+            latest_uids = self._fetch_latest_uids(client, folder=self.folder, limit=safe_limit)
+            if not latest_uids:
                 return []
-
-            latest_uids = sorted(uids)[-limit:]
-            fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
+            # Fetch léger: en-têtes + taille brute, pour rester stable sur de gros volumes.
+            fetched = self._fetch_in_batches(client, latest_uids, ["ENVELOPE", "RFC822.SIZE"])
 
         return self._build_summaries(fetched, latest_uids)
 
     def fetch_latest_mail_records(self, limit: int = 50, folder: str = "INBOX") -> list[MailRecord]:
-        if limit <= 0:
-            return []
+        safe_limit = self._validate_limit(limit)
+        records: list[MailRecord] = []
 
         with self._connect() as client:
-            client.select_folder(folder, readonly=True)
-            uids = client.search(["ALL"])
-
-            if not uids:
+            latest_uids = self._fetch_latest_uids(client, folder=folder, limit=safe_limit)
+            if not latest_uids:
                 return []
 
-            latest_uids = sorted(uids)[-limit:]
-            fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
+            ordered_uids = sorted(latest_uids, reverse=True)
+            for uid_batch in _iter_uid_batches(ordered_uids, self.fetch_batch_size):
+                fetched_batch = client.fetch(uid_batch, ["ENVELOPE", "BODY.PEEK[]", "RFC822.SIZE"])
 
-        records: list[MailRecord] = []
-        for uid in sorted(latest_uids, reverse=True):
-            payload = fetched.get(uid, {})
-            envelope = _get_payload_value(payload, "ENVELOPE")
-            if envelope is None:
-                continue
+                for uid in uid_batch:
+                    payload = fetched_batch.get(uid, {})
+                    envelope = _get_payload_value(payload, "ENVELOPE")
+                    if envelope is None:
+                        continue
 
-            raw_message = _get_first_payload_value(
-                payload,
-                ["BODY[]", "BODY.PEEK[]", "RFC822"],
-            )
+                    raw_message = _get_first_payload_value(
+                        payload,
+                        ["BODY[]", "BODY.PEEK[]", "RFC822"],
+                    )
 
-            body_text = ""
-            attachment_count = 0
-            if isinstance(raw_message, bytes):
-                body_text, attachment_count = _extract_body_and_attachment_count(raw_message)
+                    body_text = ""
+                    attachment_count = 0
+                    if isinstance(raw_message, bytes):
+                        body_text, attachment_count = _extract_body_and_attachment_count(raw_message)
+                    body_size = len(body_text) if body_text else _extract_message_size(payload)
 
-            subject = _decode_mime_text(getattr(envelope, "subject", None)) or "(sans objet)"
-            sender_list = getattr(envelope, "from_", None) or []
-            sender = _extract_sender(sender_list[0] if sender_list else None)
-            recipients = _extract_recipients(envelope)
-            date_value = getattr(envelope, "date", None)
-            if isinstance(date_value, datetime):
-                date_string = date_value.isoformat()
-            else:
-                date_string = _decode_mime_text(date_value) or ""
+                    subject = _decode_mime_text(getattr(envelope, "subject", None)) or "(sans objet)"
+                    sender_list = getattr(envelope, "from_", None) or []
+                    sender = _extract_sender(sender_list[0] if sender_list else None)
+                    recipients = _extract_recipients(envelope)
+                    date_value = getattr(envelope, "date", None)
+                    if isinstance(date_value, datetime):
+                        date_string = date_value.isoformat()
+                    else:
+                        date_string = _decode_mime_text(date_value) or ""
 
-            records.append(
-                MailRecord(
-                    uid=int(uid),
-                    folder=folder,
-                    subject=subject,
-                    sender=sender,
-                    recipients=recipients,
-                    date=date_string,
-                    body_text=body_text,
-                    body_size=len(body_text),
-                    attachment_count=attachment_count,
-                    message_id=_decode_mime_text(getattr(envelope, "message_id", None)) or None,
-                )
-            )
+                    records.append(
+                        MailRecord(
+                            uid=int(uid),
+                            folder=folder,
+                            subject=subject,
+                            sender=sender,
+                            recipients=recipients,
+                            date=date_string,
+                            body_text=body_text,
+                            body_size=body_size,
+                            attachment_count=attachment_count,
+                            message_id=_decode_mime_text(getattr(envelope, "message_id", None)) or None,
+                        )
+                    )
 
         return records
 
@@ -390,19 +442,12 @@ class MailConnector:
             if envelope is None:
                 continue
 
-            raw_message = _get_first_payload_value(
-                payload,
-                ["BODY[]", "BODY.PEEK[]", "RFC822"],
-            )
-            body_text = ""
-            attachment_count = 0
-            if isinstance(raw_message, bytes):
-                body_text, attachment_count = _extract_body_and_attachment_count(raw_message)
-
             subject = _decode_mime_text(getattr(envelope, "subject", None)) or "(sans objet)"
             sender_list = getattr(envelope, "from_", None) or []
             sender = _extract_sender(sender_list[0] if sender_list else None)
             date = getattr(envelope, "date", None)
+
+            body_size = _extract_message_size(payload)
 
             summaries.append(
                 MailSummary(
@@ -410,8 +455,8 @@ class MailConnector:
                     subject=subject,
                     sender=sender,
                     date=date,
-                    body_size=len(body_text),
-                    attachment_count=attachment_count,
+                    body_size=body_size,
+                    attachment_count=0,
                 )
             )
 

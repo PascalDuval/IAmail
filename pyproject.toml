@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mailia"
+version = "0.1.0"
+description = "Mail IA Agent local-first"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "imapclient",
+    "python-dotenv",
+    "ollama",
+    "chromadb",
+    "pdfplumber",
+    "python-docx",
+    "pytesseract",
+    "Pillow",
+    "pandas",
+    "typer",
+    "rich",
+    "streamlit",
+]
+
+[project.scripts]
+mailia = "src.cli:main"
+mailia-streamlit = "app_streamlit:launch"
+
+[tool.setuptools]
+py-modules = ["app_streamlit"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]

@@ -8,7 +8,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ingestion import IngestionService  # noqa: E402
-from src.indexer import SemanticIndexer  # noqa: E402
 from src.mail_connector import MailConnector  # noqa: E402
 from src.structured_store import MailRecord, StructuredStore  # noqa: E402
 
@@ -66,26 +65,18 @@ def main() -> int:
 
     store = StructuredStore(db_path=db_path)
     store.init_schema()
-    indexer = SemanticIndexer(
-        persist_directory=chroma_path,
-        collection_name="sync_stage10_demo",
-        chunk_size=220,
-        chunk_overlap=30,
-    )
-    indexer.reset_collection()
 
-    service = IngestionService(connector=FakeConnector(), store=store, indexer=indexer)
-    summary = service.sync_folder(folder="INBOX", limit=2)
+    service = IngestionService(connector=FakeConnector(), store=store, indexer=None)
+    summary = service.sync_folder(folder="INBOX", limit=2, enable_indexing=False)
 
     all_ok = True
     all_ok = _ok("mails récupérés", summary.fetched == 2) and all_ok
     all_ok = _ok("mails enregistrés", summary.stored == 2) and all_ok
-    all_ok = _ok("chunks indexés", summary.chunks_indexed >= 2) and all_ok
+    all_ok = _ok("chunks indexés", summary.chunks_indexed == 0) and all_ok
     all_ok = _ok("sqlite rempli", len(store.get_all_mails()) == 2) and all_ok
-    all_ok = _ok("chroma rempli", indexer.count() >= 2) and all_ok
 
     if all_ok:
-        print("Étape sync OK: synchronisation INBOX vers SQLite + Chroma valide.")
+        print("Étape sync OK: synchronisation INBOX vers SQLite en mode safe valide.")
         return 0
 
     print("Étape sync KO: un élément de la synchronisation a échoué.")

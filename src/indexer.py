@@ -4,8 +4,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-import chromadb
-from ollama import Client
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+	import chromadb
+	from ollama import Client
 
 
 def chunk_text(text: str, chunk_size: int = 1200, chunk_overlap: int = 120) -> list[str]:
@@ -32,7 +35,11 @@ def chunk_text(text: str, chunk_size: int = 1200, chunk_overlap: int = 120) -> l
 class OllamaEmbeddingFunction:
 	def __init__(self, model: str, host: str) -> None:
 		self.model = model
-		self.client = Client(host=host)
+		try:
+			from ollama import Client as OllamaClient
+		except ModuleNotFoundError as exc:
+			raise RuntimeError("Ollama n'est pas installe: le mode hybride Chroma/Ollama est indisponible.") from exc
+		self.client = OllamaClient(host=host)
 
 	def __call__(self, input: list[str]) -> list[list[float]]:
 		response = self.client.embed(model=self.model, input=input)
@@ -70,7 +77,12 @@ class SemanticIndexer:
 		self.chunk_size = chunk_size
 		self.chunk_overlap = chunk_overlap
 
-		self.client = chromadb.PersistentClient(path=str(self.persist_directory))
+		try:
+			import chromadb as chromadb_module
+		except ModuleNotFoundError as exc:
+			raise RuntimeError("ChromaDB n'est pas installe: le mode hybride est indisponible.") from exc
+
+		self.client = chromadb_module.PersistentClient(path=str(self.persist_directory))
 		self.embedding_function = OllamaEmbeddingFunction(
 			model=self.embedding_model,
 			host=self.ollama_host,

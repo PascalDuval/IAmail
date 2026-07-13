@@ -22,7 +22,12 @@ class QueryResult:
 
 
 class QueryEngine:
-	def __init__(self, store: StructuredStore, indexer: SemanticIndexer, llm: OllamaLLM) -> None:
+	def __init__(
+		self,
+		store: StructuredStore,
+		indexer: SemanticIndexer | None,
+		llm: OllamaLLM | None,
+	) -> None:
 		self.store = store
 		self.indexer = indexer
 		self.llm = llm
@@ -33,6 +38,8 @@ class QueryEngine:
 		db_path: str | Path | None = None,
 		chroma_path: str | Path | None = None,
 		collection_name: str = "mail_chunks",
+		enable_semantic: bool = False,
+		enable_llm: bool = False,
 	) -> "QueryEngine":
 		load_dotenv()
 
@@ -41,18 +48,20 @@ class QueryEngine:
 
 		store = StructuredStore(db_path=store_path)
 		store.init_schema()
-		indexer = SemanticIndexer(
-			persist_directory=chroma_dir,
-			collection_name=collection_name,
-			chunk_size=1200,
-			chunk_overlap=120,
-		)
-		llm = OllamaLLM.from_env()
+		indexer: SemanticIndexer | None = None
+		if enable_semantic:
+			indexer = SemanticIndexer(
+				persist_directory=chroma_dir,
+				collection_name=collection_name,
+				chunk_size=1200,
+				chunk_overlap=120,
+			)
+		llm: OllamaLLM | None = OllamaLLM.from_env() if enable_llm else None
 		return cls(store=store, indexer=indexer, llm=llm)
 
 	def build_context(self, question: str, structured_limit: int = 5, semantic_limit: int = 5) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
 		structured_hits = self.store.search_mails(question, limit=structured_limit)
-		semantic_hits = self.indexer.semantic_search(question, n_results=semantic_limit)
+		semantic_hits = self.indexer.semantic_search(question, n_results=semantic_limit) if self.indexer is not None else []
 
 		context_parts = [
 			self._format_structured_hits(structured_hits),
@@ -65,9 +74,8 @@ class QueryEngine:
 		structured_hits, semantic_hits, context = self.build_context(question)
 		if not structured_hits and not semantic_hits:
 			answer = (
-				"Aucune donnée indexée n'est encore disponible dans SQLite ni dans Chroma. "
-				"Lancez d'abord `python.exe -m src.cli sync --folder INBOX` pour charger la boîte principale, "
-				"puis relancez `ask`."
+				"Mode safe actif: aucun mail suffisamment pertinent n'a été trouvé dans SQLite pour cette requete. "
+				"Essayez une recherche plus précise, par exemple avec un expediteur, un sujet ou un mot distinctif."
 			)
 			return QueryResult(
 				question=question,
@@ -76,7 +84,10 @@ class QueryEngine:
 				semantic_hits=[],
 				context=context,
 			)
-		answer = self.llm.generate_answer(question=question, context=context)
+		if self.llm is None:
+			answer = self._build_safe_answer(question=question, structured_hits=structured_hits)
+		else:
+			answer = self.llm.generate_answer(question=question, context=context)
 		return QueryResult(
 			question=question,
 			answer=answer,
@@ -105,5 +116,23 @@ class QueryEngine:
 			snippet = str(hit.get("document", "")).replace("\n", " ").strip()
 			lines.append(
 				f"- {hit.get('id', '')} | distance={hit.get('distance', '')} | {snippet[:220]}"
+			)
+		return "\n".join(lines)
+
+	def _build_safe_answer(self, question: str, structured_hits: list[dict[str, Any]]) -> str:
+		if not structured_hits:
+			return (
+				"Mode safe actif: je n'utilise pas Chroma/Ollama pour cette requete. "
+				"Aucun mail correspondant n'a ete trouve dans SQLite."
+			)
+
+		lines = [
+			"Mode safe actif: reponse basee uniquement sur SQLite.",
+			f"Question: {question}",
+			"Derniers resultats pertinents:",
+		]
+		for hit in structured_hits[:5]:
+			lines.append(
+				f"- [{hit.get('sent_at', '')}] {hit.get('sender', '')} | {hit.get('subject', '')} | corps={hit.get('body_size', 0)} caracteres"
 			)
 		return "\n".join(lines)

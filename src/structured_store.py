@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -97,6 +98,50 @@ class StructuredStore:
 				CREATE INDEX IF NOT EXISTS idx_entities_mail_id ON entities(mail_id);
 				"""
 			)
+
+			# Index full-text safe/local sans dependance Chroma.
+			try:
+				connection.executescript(
+					"""
+					CREATE VIRTUAL TABLE IF NOT EXISTS mails_fts USING fts5(
+						subject,
+						sender,
+						recipients,
+						body_text,
+						content='mails',
+						content_rowid='id',
+						tokenize='unicode61 remove_diacritics 2'
+					);
+
+					CREATE TRIGGER IF NOT EXISTS mails_ai AFTER INSERT ON mails BEGIN
+						INSERT INTO mails_fts(rowid, subject, sender, recipients, body_text)
+						VALUES (new.id, new.subject, new.sender, new.recipients, new.body_text);
+					END;
+
+					CREATE TRIGGER IF NOT EXISTS mails_ad AFTER DELETE ON mails BEGIN
+						INSERT INTO mails_fts(mails_fts, rowid, subject, sender, recipients, body_text)
+						VALUES ('delete', old.id, old.subject, old.sender, old.recipients, old.body_text);
+					END;
+
+					CREATE TRIGGER IF NOT EXISTS mails_au AFTER UPDATE ON mails BEGIN
+						INSERT INTO mails_fts(mails_fts, rowid, subject, sender, recipients, body_text)
+						VALUES ('delete', old.id, old.subject, old.sender, old.recipients, old.body_text);
+						INSERT INTO mails_fts(rowid, subject, sender, recipients, body_text)
+						VALUES (new.id, new.subject, new.sender, new.recipients, new.body_text);
+					END;
+					"""
+				)
+
+				connection.execute(
+					"""
+					INSERT OR REPLACE INTO mails_fts(rowid, subject, sender, recipients, body_text)
+					SELECT id, subject, sender, recipients, body_text
+					FROM mails
+					"""
+				)
+			except sqlite3.OperationalError:
+				# Fallback automatique si FTS5 est indisponible.
+				pass
 
 	def upsert_mail(self, mail: MailRecord) -> int:
 		now_iso = datetime.now(UTC).isoformat()
@@ -259,13 +304,55 @@ class StructuredStore:
 			return [dict(row) for row in rows]
 
 	def search_mails(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+		fts_results = self._search_mails_fts(query=query, limit=limit)
+		if fts_results:
+			return fts_results
+
+		return self._search_mails_fallback(query=query, limit=limit)
+
+	def _search_mails_fts(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+		tokens = _extract_search_tokens(query)
+		if not tokens:
+			return []
+
+		fts_query = " OR ".join(f'"{token}"*' for token in tokens)
+
+		with self._connect() as connection:
+			try:
+				rows = connection.execute(
+					"""
+					SELECT
+						m.id,
+						m.uid,
+						m.folder,
+						m.subject,
+						m.sender,
+						m.recipients,
+						m.sent_at,
+						m.body_size,
+						m.attachment_count,
+						bm25(mails_fts, 6.0, 3.0, 2.0, 1.0) AS score
+					FROM mails_fts
+					JOIN mails AS m ON m.id = mails_fts.rowid
+					WHERE mails_fts MATCH ?
+					ORDER BY score ASC, datetime(m.sent_at) DESC
+					LIMIT ?
+					""",
+					(fts_query, limit),
+				).fetchall()
+			except sqlite3.OperationalError:
+				return []
+
+		return [dict(row) for row in rows]
+
+	def _search_mails_fallback(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
 		normalized_query = _normalize_text(query)
 		if not normalized_query:
-			return self.get_recent_mails(limit=limit)
+			return []
 
-		tokens = [token for token in normalized_query.split() if len(token) > 2]
+		tokens = _extract_search_tokens(query)
 		if not tokens:
-			return self.get_recent_mails(limit=limit)
+			return []
 
 		matches: list[dict[str, Any]] = []
 		for mail in self.get_all_mails():
@@ -284,7 +371,12 @@ class StructuredStore:
 				matches.append(mail_with_score)
 
 		matches.sort(key=lambda item: (-int(item.get("score", 0)), str(item.get("sent_at", ""))), reverse=False)
-		return matches[:limit]
+		if not matches:
+			return []
+
+		required_score = 1 if len(tokens) <= 2 else 2
+		filtered_matches = [item for item in matches if int(item.get("score", 0)) >= required_score]
+		return filtered_matches[:limit]
 
 	def get_mail_attachments(self, mail_id: int) -> list[dict[str, Any]]:
 		with self._connect() as connection:
@@ -330,3 +422,55 @@ def _normalize_text(value: str) -> str:
 	normalized = unicodedata.normalize("NFKD", value)
 	without_accents = "".join(character for character in normalized if not unicodedata.combining(character))
 	return " ".join(without_accents.lower().split())
+
+
+_SEARCH_STOPWORDS = {
+	"a",
+	"au",
+	"aux",
+	"avec",
+	"ce",
+	"ces",
+	"de",
+	"des",
+	"du",
+	"dans",
+	"en",
+	"et",
+	"je",
+	"la",
+	"le",
+	"les",
+	"mes",
+	"mon",
+	"nos",
+	"notre",
+	"pour",
+	"que",
+	"qui",
+	"sur",
+	"ses",
+	"son",
+	"une",
+	"un",
+	"vos",
+	"votre",
+	"resume",
+	"resumer",
+	"echanges",
+	"echanges",
+	"echange",
+	"derniers",
+	"dernieres",
+	"dernier",
+	"derniere",
+	"jours",
+	"jour",
+	"quinze",
+}
+
+
+def _extract_search_tokens(query: str) -> list[str]:
+	normalized_query = _normalize_text(query)
+	raw_tokens = re.findall(r"[a-z0-9_]+", normalized_query)
+	return [token for token in raw_tokens if len(token) > 2 and token not in _SEARCH_STOPWORDS]

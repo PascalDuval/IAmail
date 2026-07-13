@@ -34,9 +34,9 @@ def index(
         10,
         "--limit",
         "-n",
-        min=1,
-        max=200,
-        help="Nombre de mails recents a afficher.",
+        min=5,
+        max=10000,
+        help="Nombre de mails recents a afficher (borne safe: 5 a 10000).",
     ),
 ) -> None:
     """Affiche les derniers mails de INBOX (date, expediteur, objet)."""
@@ -55,8 +55,7 @@ def index(
     table = Table(title=f"{len(messages)} dernier(s) mail(s) INBOX")
     table.add_column("Date", style="cyan")
     table.add_column("Expediteur", style="green")
-    table.add_column("Corps (car)", style="magenta", justify="right")
-    table.add_column("PJ", style="yellow", justify="right")
+    table.add_column("Taille brute (octets)", style="magenta", justify="right")
     table.add_column("Objet", style="white")
 
     for mail in messages:
@@ -64,7 +63,6 @@ def index(
             _format_date(mail.date),
             mail.sender,
             str(mail.body_size),
-            str(mail.attachment_count),
             mail.subject,
         )
 
@@ -77,19 +75,28 @@ def sync(
         50,
         "--limit",
         "-n",
-        min=1,
-        max=500,
-        help="Nombre de mails les plus recents à ingérer depuis la boîte principale.",
+        min=5,
+        max=10000,
+        help="Nombre de mails les plus recents a ingerer (borne safe: 5 a 10000).",
     ),
     folder: str = typer.Option("INBOX", "--folder", "-f", help="Dossier Gmail à synchroniser."),
+    enable_indexing: bool = typer.Option(
+        False,
+        "--enable-indexing/--no-enable-indexing",
+        help="Active l'indexation Chroma/Ollama. Desactive par defaut pour un mode safe (SQLite uniquement). Chemin experimental a n'utiliser que sur une machine stable.",
+    ),
     db_path: Path = typer.Option(Path("data/mail_ai.db"), "--db-path", help="Chemin de la base SQLite locale."),
     chroma_path: Path = typer.Option(Path("data/chroma_db"), "--chroma-path", help="Chemin de persistence Chroma."),
 ) -> None:
-    """Synchronise la boîte principale vers SQLite et Chroma avant d'utiliser ask."""
-    service = IngestionService.from_env(db_path=db_path, chroma_path=chroma_path)
+    """Synchronise la boîte principale vers SQLite en mode safe par défaut, avec indexation optionnelle."""
+    service = IngestionService.from_env(
+        db_path=db_path,
+        chroma_path=chroma_path,
+        enable_indexing=enable_indexing,
+    )
 
     try:
-        summary = service.sync_folder(folder=folder, limit=limit)
+        summary = service.sync_folder(folder=folder, limit=limit, enable_indexing=enable_indexing)
     except Exception as exc:
         console.print(f"[red]Erreur lors de la synchronisation:[/red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -98,16 +105,28 @@ def sync(
     console.print(f"[green]Mails récupérés:[/green] {summary.fetched}")
     console.print(f"[green]Mails enregistrés:[/green] {summary.stored}")
     console.print(f"[green]Chunks indexés:[/green] {summary.chunks_indexed}")
+    if not enable_indexing:
+        console.print("[yellow]Mode safe actif:[/yellow] indexation Chroma/Ollama desactivee.")
 
 
 @app.command()
 def ask(
     question: str = typer.Argument(..., help="Question en francais a poser au moteur."),
+    safe: bool = typer.Option(
+        True,
+        "--safe/--no-safe",
+        help="Mode de secours SQLite-only par defaut. --no-safe active le chemin hybride experimental, a eviter si la machine plante.",
+    ),
     db_path: Path = typer.Option(Path("data/mail_ai.db"), "--db-path", help="Chemin de la base SQLite locale."),
     chroma_path: Path = typer.Option(Path("data/chroma_db"), "--chroma-path", help="Chemin de persistence Chroma."),
 ) -> None:
-    """Interroge les couches SQLite et Chroma puis affiche une reponse en francais."""
-    engine = QueryEngine.from_env(db_path=db_path, chroma_path=chroma_path)
+    """Interroge SQLite en mode safe par défaut; le chemin hybride reste optionnel et experimental."""
+    engine = QueryEngine.from_env(
+        db_path=db_path,
+        chroma_path=chroma_path,
+        enable_semantic=not safe,
+        enable_llm=not safe,
+    )
 
     try:
         result = engine.ask(question)
@@ -116,6 +135,8 @@ def ask(
         raise typer.Exit(code=1) from exc
 
     console.print("[bold cyan]Question :[/bold cyan]", question)
+    if safe:
+        console.print("[yellow]Mode safe actif:[/yellow] aucune connexion Chroma/Ollama n'a ete utilisee.")
     console.print("[bold green]Réponse :[/bold green]", result.answer)
 
 
@@ -174,4 +195,8 @@ def delete(
 
 
 if __name__ == "__main__":
+    app()
+
+
+def main() -> None:
     app()

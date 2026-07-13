@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from dotenv import load_dotenv
-from ollama import Client
 
 
 @dataclass
@@ -19,7 +18,11 @@ class OllamaLLM:
 	def __init__(self, model: str = "mistral", host: str = "http://localhost:11434") -> None:
 		self.model = model
 		self.host = host
-		self.client = Client(host=host)
+		try:
+			from ollama import Client as OllamaClient
+		except ModuleNotFoundError as exc:
+			raise RuntimeError("Ollama n'est pas installe: le mode hybride est indisponible.") from exc
+		self.client = OllamaClient(host=host)
 
 	@classmethod
 	def from_env(cls) -> "OllamaLLM":

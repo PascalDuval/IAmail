@@ -19,7 +19,12 @@ class IngestionSummary:
 
 
 class IngestionService:
-    def __init__(self, connector: MailConnector, store: StructuredStore, indexer: SemanticIndexer) -> None:
+    def __init__(
+        self,
+        connector: MailConnector,
+        store: StructuredStore,
+        indexer: SemanticIndexer | None,
+    ) -> None:
         self.connector = connector
         self.store = store
         self.indexer = indexer
@@ -30,37 +35,42 @@ class IngestionService:
         db_path: str | Path | None = None,
         chroma_path: str | Path | None = None,
         collection_name: str = "mail_chunks",
+        enable_indexing: bool = True,
     ) -> "IngestionService":
         load_dotenv()
 
         connector = MailConnector.from_env()
         store = StructuredStore(db_path=db_path or Path("data/mail_ai.db"))
         store.init_schema()
-        indexer = SemanticIndexer(
-            persist_directory=chroma_path or Path("data/chroma_db"),
-            collection_name=collection_name,
-        )
+        indexer: SemanticIndexer | None = None
+        if enable_indexing:
+            indexer = SemanticIndexer(
+                persist_directory=chroma_path or Path("data/chroma_db"),
+                collection_name=collection_name,
+            )
         return cls(connector=connector, store=store, indexer=indexer)
 
-    def sync_folder(self, folder: str = "INBOX", limit: int = 50) -> IngestionSummary:
+    def sync_folder(self, folder: str = "INBOX", limit: int = 50, enable_indexing: bool = True) -> IngestionSummary:
         records = self.connector.fetch_latest_mail_records(limit=limit, folder=folder)
         stored_count = 0
         chunk_count = 0
+        should_index = enable_indexing and self.indexer is not None
 
         for record in records:
             mail_id = self.store.upsert_mail(record)
-            chunk_count += self.indexer.index_document(
-                doc_id=f"{record.folder}:{record.uid}",
-                text=record.body_text or record.subject,
-                metadata={
-                    "folder": record.folder,
-                    "uid": record.uid,
-                    "subject": record.subject,
-                    "sender": record.sender,
-                    "recipients": record.recipients,
-                    "mail_id": mail_id,
-                },
-            )
+            if should_index:
+                chunk_count += self.indexer.index_document(
+                    doc_id=f"{record.folder}:{record.uid}",
+                    text=record.body_text or record.subject,
+                    metadata={
+                        "folder": record.folder,
+                        "uid": record.uid,
+                        "subject": record.subject,
+                        "sender": record.sender,
+                        "recipients": record.recipients,
+                        "mail_id": mail_id,
+                    },
+                )
             stored_count += 1
 
         return IngestionSummary(

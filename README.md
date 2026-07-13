@@ -1,10 +1,21 @@
 # Mail IA Agent (Gmail, local-first)
 
-Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre des recherches en langage naturel, en gardant les donnees en local.
+Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre des recherches locales. Le fonctionnement de reference est le mode safe SQLite-only. Le chemin Chroma/Ollama reste disponible mais il est volontairement considere comme optionnel et experimental sur cette machine.
+
+Important:
+- le mode safe n'est plus une simple recherche naive: il repose sur un index full-text SQLite FTS5 local
+- cet index est maintenu automatiquement quand les mails sont synchronisés
+
+Alternative a ChromaDB si vous cherchez surtout la stabilité:
+- SQLite FTS5 pour la recherche lexicale locale, très simple et robuste.
+- FAISS pour un index vectoriel local léger, si vous acceptez une gestion manuelle de la persistance.
+- sqlite-vss pour rester dans l'écosystème SQLite avec un moteur vectoriel embarqué.
+
+En pratique, la meilleure option pour éviter les plantages ici reste SQLite FTS5 ou le mode safe actuel. ChromaDB n'est pas forcément le problème unique: le chemin hybride dépend aussi d'Ollama et des embeddings.
 
 ## Architecture globale
 
-L'architecture du projet suit un pipeline local de bout en bout. Le connecteur IMAP lit les mails Gmail et leurs metadonnees, puis le module d'extraction transforme le contenu des pieces jointes (PDF, DOCX, images OCR) en texte exploitable. Ce contenu est ensuite envoye dans deux couches complementaires: une couche structuree SQLite et une couche semantique vectorielle (ChromaDB, etape suivante).
+L'architecture du projet suit un pipeline local de bout en bout. Le connecteur IMAP lit les mails Gmail et leurs metadonnees, puis le module d'extraction transforme le contenu des pieces jointes (PDF, DOCX, images OCR) en texte exploitable. Par défaut, ce contenu alimente uniquement la couche structuree SQLite. La couche vectorielle ChromaDB et le moteur Ollama ne sont utilisés que si on les active explicitement, car ils ont déjà provoque des coupures brutales sur cette machine.
 
 ```mermaid
 flowchart LR
@@ -23,17 +34,35 @@ flowchart LR
 
 SQLite joue le role de colonne vertebrale factuelle du systeme. La base stocke des informations explicites et verifiables comme la date, l'expediteur, le sujet, le corps normalise, les pieces jointes et, ensuite, les entites extraites (montants, personnes, themes). Cette couche permet des filtres exacts, des tris temporels, des agregations et des tableaux, ce qui est indispensable pour repondre de maniere fiable aux questions metier sans hallucination.
 
-La couche vectorielle est utile pour la recherche de similarite semantique, mais elle ne remplace pas SQLite. Les deux couches sont combinees par le moteur de requete: SQLite apporte la precision structuree, Chroma apporte le rappel semantique, et le LLM formule la reponse finale uniquement a partir des resultats recuperes.
+En mode safe, le moteur de requete s'appuie uniquement sur SQLite. Cela suffit pour des requetes du type « derniers mails », « offres d'emploi des quinze derniers jours », « mails de tel expediteur », ou « synthese des sujets les plus recents ». Le chemin hybride peut apporter plus de rappel semantique, mais il n'est pas le comportement de reference ici.
 
-Le rôle de ChromaDB est donc de mémoriser des vecteurs d'embeddings par morceaux de texte (chunks) pour retrouver des contenus proches en sens, même quand les mots exacts ne correspondent pas. Cette capacité est essentielle pour des questions comme « historique du prix du gâteau au chocolat », « résumé de mes interactions avec Julien » ou encore « évolution de mes échanges avec le service comptabilité », lorsque le vocabulaire varie d’un mail à l’autre.
+En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, puis `query_engine.py` orchestre une reponse locale safe uniquement a partir de SQLite. Les actions de maintenance sont isolees dans `actions.py`, et la CLI expose les commandes `ask`, `archive` et `delete` avant l'interface Streamlit.
 
-Ollama est le moteur IA local du projet. Il fournit deux choses differentes mais complementaires: les embeddings via `nomic-embed-text` pour ChromaDB, et le modele de langage `mistral` pour rediger la reponse finale. Tesseract, lui, sert uniquement a faire l'OCR sur les images et les scans; sans lui, les documents photographies ou numerises ne peuvent pas etre transformes en texte exploitable.
+## Choix retenus
 
-En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, la recherche semantique est geree par `indexer.py`, puis `query_engine.py` orchestre les appels pour produire une reponse via `llm.py`. Les actions de maintenance sont isolees dans `actions.py`, et la CLI expose les commandes `ask`, `archive` et `delete` avant de preparer l'interface Streamlit.
+Le projet a maintenant un choix clair de reference:
+
+- Mode retenu: SQLite-only, safe, sans dépendance à Chroma/Ollama pour les usages courants.
+- Interfaces retenues: CLI `mailia`, commande Streamlit locale, tests de validation en lecture SQLite.
+- Limite de volume: jusqu'à `10000` messages, mais en pratique il vaut mieux commencer plus bas et monter progressivement.
+
+Options encore possibles mais non retenues par défaut sur cette machine:
+
+- ChromaDB pour le rappel sémantique.
+- Ollama pour les embeddings et la génération LLM.
+- Chemin `--no-safe`, explicitement experimental, à réserver à une machine plus robuste.
+
+Pourquoi ce choix:
+
+- la stabilité prime sur la complétude fonctionnelle;
+- le mode hybride a déjà provoqué des coupures brutales du PC;
+- le mode safe couvre déjà l'essentiel des usages pratiques: lecture, tri, recherche simple, consultation locale et Streamlit.
 
 ## Prealables (a faire avant le clone)
 
 ### 1) Ollama + modeles
+
+Cette section est optionnelle sur cette machine. Elle sert seulement si vous souhaitez retester le chemin hybride Chroma/Ollama dans un environnement plus robuste.
 
 1. Installer Ollama (Windows): https://ollama.com/download
 2. Verifier:
@@ -57,6 +86,13 @@ ollama run mistral "dis bonjour"
 
 Ollama tourne en local sur http://localhost:11434.
 
+Recommandation de confort pour un usage hybride stable:
+- CPU: 6 cœurs physiques ou plus
+- RAM: 16 Go minimum, 32 Go recommandés
+- Stockage: SSD NVMe, avec plusieurs gigaoctets libres pour les modèles et les index
+- GPU: optionnel mais utile; 6 à 8 Go de VRAM aident nettement pour les modèles plus lourds
+- Refroidissement: ne pas lancer le mode hybride sur une machine déjà chaude ou à l'arrêt thermique limite
+
 ### 2) Tesseract OCR (Windows)
 
 1. Installer Tesseract (UB Mannheim): https://github.com/UB-Mannheim/tesseract/wiki
@@ -74,9 +110,11 @@ Si PATH n'est pas disponible, definir dans `.env`:
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
-### 3) ChromaDB + embeddings (etape 5)
+### 3) ChromaDB + embeddings (etape 5, optionnelle)
 
-Il n'y a pas d'installeur systeme pour ChromaDB dans ce projet: la dependance Python est deja dans `requirements.txt`. En revanche, il faut bien avoir Ollama actif avec le modele d'embeddings `nomic-embed-text`, car Chroma stocke les vecteurs produits par ce modele.
+Il n'y a pas d'installeur systeme pour ChromaDB dans ce projet: la dependance Python est deja dans `requirements.txt`. En revanche, si vous activez cette étape, il faut avoir Ollama actif avec le modele d'embeddings `nomic-embed-text`, car Chroma stocke les vecteurs produits par ce modele. Sur cette machine, ce chemin est expérimental et non recommandé.
+
+Si vous voulez éviter ChromaDB tout en gardant une recherche utile, privilégiez SQLite FTS5 ou FAISS. Cela réduit la surface de panne, mais vous perdez une partie du confort du pipeline hybride complet.
 
 Verification rapide:
 
@@ -86,9 +124,9 @@ ollama list
 
 Vous devez voir `nomic-embed-text:latest` dans la liste.
 
-### 4) Ollama pour les reponses LLM (etapes 6-7)
+### 4) Ollama pour les reponses LLM (etapes 6-7, optionnel)
 
-Le modele de langage local utilise par le wrapper LLM est `mistral` par defaut. Il doit apparaitre dans `ollama list`, et le service Ollama doit rester actif pendant les tests du moteur de requete.
+Le modele de langage local utilise par le wrapper LLM est `mistral` par defaut. Il doit apparaitre dans `ollama list`, et le service Ollama doit rester actif pendant les tests du moteur de requete. Cette étape n'est à tenter que si la machine est suffisamment dimensionnée et que le mode safe vous donne déjà le résultat fonctionnel attendu.
 
 Verification rapide:
 
@@ -110,8 +148,28 @@ Pourquoi installer Tesseract des le debut:
 Etat actuel:
 - setup du projet
 - connexion IMAP Gmail
-- commande CLI `index` pour afficher les 10 derniers mails de INBOX
-- round 2: affichage de la taille du corps texte et du nombre de pieces jointes
+- commande CLI `index` pour afficher les derniers mails de INBOX en mode safe
+- fetch IMAP par batch pour limiter les pics memoire sur gros volumes
+
+Lancement rapide:
+
+```bash
+python.exe -m src.cli sync --folder INBOX --limit 50
+python.exe -m src.cli ask "Résumé des dernières offres d'emplois sur les derniers quinze jours"
+streamlit run app_streamlit.py
+```
+
+Si `streamlit` n'est pas dans le PATH:
+
+```bash
+python.exe -m streamlit run app_streamlit.py
+```
+
+Si le paquet local a été installé:
+
+```bash
+mailia-streamlit
+```
 
 ## 0) Prérequis avant de cloner le repo
 
@@ -189,6 +247,7 @@ IMAP_PORT=993
 IMAP_SSL=true
 IMAP_SSL_VERIFY=true
 IMAP_FOLDER=INBOX
+IMAP_FETCH_BATCH_SIZE=200
 LLM_MODEL=mistral
 OLLAMA_HOST=http://localhost:11434
 EMBEDDING_MODEL=nomic-embed-text
@@ -204,6 +263,7 @@ Variables prises en charge:
 - `IMAP_SSL`: `true` ou `false`
 - `IMAP_SSL_VERIFY`: `true` ou `false` (laisser `true` sauf diagnostic local)
 - `IMAP_FOLDER`: dossier a lire (par defaut `INBOX`)
+- `IMAP_FETCH_BATCH_SIZE`: taille des lots IMAP pour limiter l'usage memoire (par defaut `200`)
 - `LLM_MODEL`: modele de langage utilise pour la synthese des reponses (par defaut `mistral`)
 - `OLLAMA_HOST`: endpoint Ollama local (par defaut `http://localhost:11434`)
 - `EMBEDDING_MODEL`: modele d'embeddings utilise par Chroma (par defaut `nomic-embed-text`)
@@ -250,13 +310,12 @@ Exemple valide (Round 1):
 └──────────────────┴───────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2) Etape 2 / Round 2 - corps texte + pieces jointes
+### 5.2) Etape 2 / Round 2 - mode safe pour gros volumes
 
 Objectif:
-- `index` recupere aussi le corps texte (parties `text/plain`) et les pieces jointes de base
-- la table affiche deux colonnes supplementaires:
-  - `Corps (car)` = taille en caracteres du corps texte extrait
-  - `PJ` = nombre de pieces jointes detectees
+- `index` recupere les metadonnees d'enveloppe et la taille brute du message, sans charger tous les corps en masse
+- la table affiche la colonne `Taille brute (octets)`
+- plage de limite CLI: `5` a `10000`
 
 Commande de test Round 2 (20 derniers mails):
 
@@ -267,30 +326,12 @@ python.exe -m src.cli index --limit 20
 Exemple de sortie Round 2:
 
 ```text
-┌──────────────────┬───────────────────────────────────────────────────────────┬─────────────┬────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Date             │ Expediteur                                                │ Corps (car) │ PJ │ Objet                                                                                                                       │
-├──────────────────┼───────────────────────────────────────────────────────────┼─────────────┼────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2026-07-12 11:34 │ Google <no-reply@accounts.google.com>                     │         809 │  0 │ Alerte de securite                                                                                                          │
-│ 2026-07-12 11:17 │ Leader <noreply@communities.kajabimail.com>               │        3167 │  0 │ Leader is live on SAATM Virtual Academy | July 12                                                                           │
-│ 2026-07-12 11:01 │ Agone <editions@agone.org>                                │       11809 │  0 │ Un 14 juillet, il y a 237 ans [LettrInfo 26-XXI]                                                                            │
-│ 2026-07-12 10:50 │ Votre alerte Cadremploi <offres@alertes.cadremploi.fr>    │           0 │  0 │ 1 offre a ne rater sous aucun pretexte                                                                                      │
-│ 2026-07-12 10:43 │ Alertes Google Scholar <scholaralerts-noreply@google.com> │           0 │  0 │ Nietzsche - de nouveaux resultats sont disponibles                                                                          │
-│ 2026-07-12 10:43 │ Alertes Google Scholar <scholaralerts-noreply@google.com> │           0 │  0 │ "stanley cavell" - de nouveaux resultats sont disponibles                                                                   │
-│ 2026-07-12 10:15 │ Indeed <donotreply@match.indeed.com>                      │        7877 │  0 │ Chef de Projet Supervision Transport Supervision Aide a l'Exploitation (SAE) MAV - F/H (D&I/TSI) - RATP EPIC                │
-│ 2026-07-12 10:01 │ Indeed <donotreply@match.indeed.com>                      │        8051 │  0 │ Responsable maitrise d'oeuvre outillage, telemaintenance et supervision pour le Grand Paris - F/H (DSI/TSI) - RATP EPIC     │
-│ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │       10065 │  0 │ Blockchain / Cryptocurrency Project Lead [Full Stack and AWS] chez OREBiT                                                   │
-│ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │        5227 │  0 │ Alternant(e) REDACTEUR ET CREATEUR DE CONTENUS VIDEOS chez Cite internationale universitaire de Paris                       │
-│ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │        9877 │  0 │ CNIL recrute a Ville de Paris                                                                                               │
-│ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │        9975 │  0 │ Artificial Intelligence Engineer chez Reply                                                                                 │
-│ 2026-07-12 09:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │       10030 │  0 │ Artificial Intelligence Engineer chez Reply                                                                                 │
-│ 2026-07-12 09:46 │ Archana sur Facebook <friendupdates@facebookmail.com>     │         853 │  0 │ Pour vous : votre ami(e) Archana Pandey a partage la publication de Rishibha Tiwari                                         │
-│ 2026-07-12 09:42 │ Indeed <donotreply@match.indeed.com>                      │        7684 │  0 │ Responsable des Systemes d'Information H/F - remplacement - GROUPE ESRA                                                     │
-│ 2026-07-12 09:36 │ Indeed <donotreply@match.indeed.com>                      │        7432 │  0 │ Conseil en Reglementation ESP/ESPN F/H - EDF                                                                                │
-│ 2026-07-12 09:30 │ AOC (Analyse Opinion Critique) <contact@aoc.media>        │        1408 │  0 │ 6 mois pour 1EUR, plus que quelques jours...                                                                                │
-│ 2026-07-12 09:05 │ Philosophie magazine <infolettres@redaction.philomag.com> │       16353 │  0 │ Marine Le Pen hors surveillance, la regle d'or du football et le cerveau de Putnam... La semaine de "Philosophie magazine" │
-│ 2026-07-12 08:06 │ Indeed <donotreply@match.indeed.com>                      │        7449 │  0 │ Chef de Projet CVC - Macro-Lot - H/F - NEO2 Consultant                                                                      │
-│ 2026-07-12 07:49 │ Alertes LinkedIn Jobs <jobalerts-noreply@linkedin.com>    │        9867 │  0 │ CNIL recrute a France                                                                                                       │
-└──────────────────┴───────────────────────────────────────────────────────────┴─────────────┴────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────┬───────────────────────────────────────────────────────────┬──────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Date             │ Expediteur                                                │ Taille brute (octets) │ Objet                                                                                                                      │
+├──────────────────┼───────────────────────────────────────────────────────────┼──────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 2026-07-12 11:34 │ Google <no-reply@accounts.google.com>                     │                 26173 │ Alerte de securite                                                                                                         │
+│ 2026-07-12 11:17 │ Leader <noreply@communities.kajabimail.com>               │                 29804 │ Leader is live on SAATM Virtual Academy | July 12                                                                          │
+└──────────────────┴───────────────────────────────────────────────────────────┴──────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.3) Etape 3 - extraction PDF / DOCX / OCR
@@ -355,13 +396,19 @@ Sortie attendue (exemple):
 Etape 4 OK: schema + insertion + lecture SQLite valides.
 ```
 
-### 5.5) Etape 5 - indexation semantique Chroma
+### 5.5) Etape 5 - indexation semantique Chroma (optionnelle)
 
 Objectif:
 - decouper le texte en chunks
 - generer les embeddings via Ollama (`nomic-embed-text`)
 - persister les chunks dans ChromaDB
 - verifier une requete semantique simple
+
+Note:
+- cette étape reste expérimentale sur cette machine
+- si elle provoque une coupure brutale, ne l'utilisez pas et restez en mode safe SQLite-only
+- avant de l'activer, vérifiez que la machine peut absorber une charge soutenue sans chute de tension, sans surchauffe, et sans redémarrage WHEA ou Kernel-Power
+- si vous ne cherchez pas à évaluer un moteur semantique, vous pouvez ignorer complètement cette étape
 
 Commande de test:
 
@@ -379,14 +426,14 @@ Sortie attendue (exemple):
 Etape 5 OK: chunking + embeddings + persistance Chroma + requete semantique valides.
 ```
 
-### 5.6) Étapes 6-7 - wrapper LLM + moteur de requête
+### 5.6) Étapes 6-7 - wrapper LLM + moteur de requête (mode hybride optionnel)
 
 Objectif:
 - interroger la couche structuree SQLite et la couche semantique Chroma en meme temps
 - construire un contexte a partir des resultats recuperes
 - faire formuler la reponse finale par le LLM local Ollama (`mistral`)
 
-Commande de test:
+Commande de test safe recommandée:
 
 ```bash
 python.exe tests/run_query_engine_examples.py
@@ -396,18 +443,37 @@ Sortie attendue (exemple):
 
 ```text
 [OK] mails indexes
-[OK] chunks indexes
 [OK] hits structurels disponibles
-[OK] hits semantiques disponibles
+[OK] aucun hit semantique en mode safe
 [OK] reponse non vide
 [OK] reponse pertinente
 --- Reponse ---
-Etape 6-7 OK: wrapper LLM + query engine valides.
+Etape 6-7 OK: moteur de requete safe valide.
 ```
 
-L'idée de cette étape est simple: SQLite apporte les faits précis, Chroma apporte le rapprochement sémantique, et Ollama rédige la réponse finale à partir de ces éléments. Tesseract, de son côté, ne sert qu'à l'OCR des images et des documents scannés.
+L'idée de cette étape est simple: SQLite apporte les faits précis. Le chemin Chroma/Ollama reste disponible mais il est expérimental sur cette machine et n'est pas utilisé par défaut.
 
-Remarque: la commande `ask` initialise automatiquement le schéma SQLite si la base n'existe pas encore. Elle ne plante donc plus sur une base vide, mais elle ne peut donner une réponse réellement utile que si des mails ont déjà été indexés dans SQLite et dans Chroma.
+Si vous voulez tout de même bénéficier pleinement de Chroma/Ollama dans de bonnes conditions:
+- commencez par un volume très faible, par exemple 5 à 20 mails
+- observez les températures CPU/GPU et la stabilité d'alimentation
+- augmentez seulement si les premiers essais sont stables
+- gardez des limites de chunk raisonnables, par exemple 800 à 1200 caractères par chunk, avec chevauchement faible
+- évitez les modèles trop lourds si la machine manque de RAM ou de VRAM
+- si le PC se coupe brutalement, arrêtez immédiatement le mode hybride et restez sur le mode safe
+
+Remarque: la commande `ask` initialise automatiquement le schéma SQLite si la base n'existe pas encore. Par defaut, elle fonctionne maintenant en mode safe SQLite-only pour eviter les plantages lies a Chroma/Ollama.
+
+Pour tenter le mode hybride complet plus tard:
+
+```bash
+python.exe -m src.cli ask "votre question" --no-safe
+```
+
+Attention:
+- `--no-safe` active le chemin hybride Chroma/Ollama.
+- sur cette machine, ce mode a provoque des coupures brutales du PC.
+- utilisez-le uniquement si vous acceptez ce risque et si vous testez sur un environnement isole.
+- il est plus sûr de ne pas l'utiliser du tout tant que la cause matérielle n'a pas été identifiée
 
 Avant d'utiliser `ask` sur la boîte principale, lancez d'abord la synchronisation locale de l'INBOX:
 
@@ -415,12 +481,162 @@ Avant d'utiliser `ask` sur la boîte principale, lancez d'abord la synchronisati
 python.exe -m src.cli sync --folder INBOX --limit 50
 ```
 
-Cette étape alimente réellement SQLite et Chroma avec les mails de la boîte principale. Le simple affichage des messages via `index` ne suffit pas: il faut une synchronisation explicite pour rendre les données interrogables par `ask`.
+Par defaut, `sync` fonctionne en mode safe (SQLite uniquement, sans indexation Chroma/Ollama) pour limiter les pics de charge.
+
+Pour activer explicitement l'indexation semantique:
+
+```bash
+python.exe -m src.cli sync --folder INBOX --limit 50 --enable-indexing
+```
+
+Note limites:
+- `index --limit` et `sync --limit` acceptent des valeurs de `5` a `10000`.
+
+Résumé des modes:
+- `index`: lecture sûre des derniers mails, sans charges lourdes.
+- `sync` par défaut: enregistre dans SQLite et met à jour l'index FTS5 local, sans embeddings.
+- `ask` par défaut: réponse locale basée sur SQLite + index FTS5.
+- `--no-safe`: chemin hybride Chroma/Ollama, expérimental et à éviter si la machine plante.
+
+Comment vérifier que le mode safe est bien indexé:
+
+```bash
+python.exe -m src.cli sync --folder INBOX --limit 50
+python.exe -m src.cli ask "mails de Jeanne"
+```
+
+Si aucun résultat pertinent n'apparaît:
+- reformulez avec un mot distinctif (nom d'expéditeur, objet précis)
+- relancez une sync pour enrichir la base locale
+- vérifiez que les mails recherchés sont bien dans `INBOX` et dans la fenêtre synchronisée
+
+## 8) Étape 10 - Dernière étape : Streamlit local
+
+Objectif:
+- offrir une interface web locale pour parcourir la base SQLite
+- interroger les mails en mode safe sans activer Chroma/Ollama
+- garder une limite d'affichage paramétrable jusqu'à `10000`
+
+Lancement local:
+
+```bash
+streamlit run app_streamlit.py
+```
+
+Si besoin, lancez la version Python directement:
+
+```bash
+python.exe -m streamlit run app_streamlit.py
+```
+
+Si le paquet local est installé, vous pouvez aussi lancer:
+
+```bash
+mailia-streamlit
+```
+
+Dans l'interface, vous avez maintenant deux modes:
+- safe: SQLite uniquement, recommandé sur cette machine
+- hybride experimental: réactive Chroma/Ollama pour tester le rappel sémantique et les réponses générées localement
+
+Le mode safe est coché par défaut. Le mode hybride doit rester un test ponctuel, pas le fonctionnement quotidien.
+
+Comportement attendu du mode safe Streamlit:
+- il interroge l'index FTS5 local de SQLite
+- il ne dépend pas de Chroma/Ollama
+- il évite la charge qui a déjà provoqué les coupures brutales sur cette machine
+
+Raccourci utile:
+- `streamlit run app_streamlit.py` lance l'interface locale directement depuis le dépôt.
+- `mailia-streamlit` fait la même chose après `python.exe -m pip install -e .`.
+- cette étape est la dernière du parcours: elle permet simplement de consulter SQLite en local, sans réactiver le mode hybride.
+
+L'interface propose:
+- un tableau des derniers mails de SQLite
+- une question en mode safe ou hybride experimental
+- un rappel visuel quand le mode hybride est sélectionné
+- un mode de lecture qui reste compatible avec un accès jusqu'à 10000 messages
+
+Bon usage:
+- si vous voulez juste consulter vos mails, restez sur Streamlit safe
+- si vous voulez tester Chroma/Ollama, faites-le ailleurs que sur cette machine ou sur une machine fraîchement préparée
+- si le mode hybride coupe le PC, revenez immédiatement au mode safe et ne relancez pas le test
+
+## 9) Étape 11 - Tests de validation
+
+Objectif:
+- valider la lecture SQLite
+- valider `ask` en mode safe
+- valider l'interface Streamlit par un smoke test non interactif
+
+Commandes de test:
+
+```bash
+python.exe tests/run_structured_store_examples.py
+python.exe tests/run_query_engine_examples.py
+python.exe tests/run_streamlit_examples.py
+```
+
+Sortie attendue:
+- `run_structured_store_examples.py` valide le schéma et l'insertion SQLite
+- `run_query_engine_examples.py` valide le moteur de requête safe
+- `run_streamlit_examples.py` valide le chemin Streamlit safe
+
+Si vous voulez vérifier le mode hybride Streamlit sur une autre machine stable, lancez l'interface et basculez le sélecteur sur "hybride experimental". Sur cette machine-ci, gardez le mode safe.
+
+## 10) Étape 12 - Packaging final
+
+Objectif:
+- pouvoir installer le projet proprement avec un paquet local
+- exposer une commande CLI `mailia`
+- exposer une commande Streamlit `mailia-streamlit`
+
+Installation editable:
+
+```bash
+python.exe -m pip install -e .
+```
+
+Commandes exposées après installation:
+
+```bash
+mailia --help
+mailia-streamlit
+```
+
+Le packaging final est défini dans [pyproject.toml](pyproject.toml).
+
+Procédure complète recommandée après installation:
+
+```bash
+python.exe -m pip install -e .
+mailia --help
+mailia sync --folder INBOX --limit 50
+mailia ask "Résumé des dernières offres d'emplois sur les derniers quinze jours"
+mailia-streamlit
+```
+
+Rappel:
+- `mailia sync` et `mailia ask` restent en mode safe par défaut.
+- n'activez pas `--no-safe` sur cette machine si vous avez déjà observé des coupures brutales.
+- le packaging existe pour simplifier l'usage safe, pas pour rendre le chemin hybride plus sûr
+
+## Résumé décisionnel
+
+Ce qui est retenu ici:
+- SQLite comme base de confiance
+- Streamlit safe par défaut
+- Chroma/Ollama seulement en option expérimentale
+
+Ce qui est conseillé si vous voulez vraiment du vectoriel sans trop de risques:
+- tester SQLite FTS5 d'abord si la recherche lexicale suffit
+- tester FAISS ou sqlite-vss sur une machine stable avant de revenir à ChromaDB
+- ne pas interpréter l'extinction brutale comme un problème uniquement lié à l'UI Streamlit: le chemin hybride complet peut déclencher la panne
 
 ### 5.7) Étapes 8-9 - commandes `ask`, `archive` et `delete`
 
 Objectif:
-- `ask` interroge le moteur hybride et renvoie une réponse en français à partir des données locales.
+- `ask` renvoie une réponse en français à partir des données locales, en mode safe SQLite-only par défaut.
 - `archive` déplace un ou plusieurs mails vers un dossier cible, avec simulation par défaut.
 - `delete` supprime définitivement un ou plusieurs mails, avec simulation par défaut et confirmation explicite avant exécution réelle.
 
@@ -433,12 +649,12 @@ python.exe tests/run_actions_examples.py
 Sortie attendue (exemple):
 
 ```text
-[OK] ask renvoie une réponse pertinente
+[OK] ask renvoie une réponse pertinente en mode safe
 [OK] archive en simulation fonctionne
 [OK] archive en mode réel simulé par faux connecteur fonctionne
 [OK] delete en simulation fonctionne
 [OK] delete en mode réel simulé par faux connecteur fonctionne
-Etapes 8-9 OK: ask + archive + delete valides.
+Etapes 8-9 OK: ask safe + archive + delete valides.
 ```
 
 Exemples d'utilisation dans la CLI:
