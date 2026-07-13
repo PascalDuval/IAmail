@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
 
 from .indexer import SemanticIndexer
 from .llm import OllamaLLM
@@ -22,6 +26,28 @@ class QueryEngine:
 		self.store = store
 		self.indexer = indexer
 		self.llm = llm
+
+	@classmethod
+	def from_env(
+		cls,
+		db_path: str | Path | None = None,
+		chroma_path: str | Path | None = None,
+		collection_name: str = "mail_chunks",
+	) -> "QueryEngine":
+		load_dotenv()
+
+		store_path = Path(db_path or os.getenv("MAIL_AI_DB_PATH", "data/mail_ai.db"))
+		chroma_dir = Path(chroma_path or os.getenv("CHROMA_PERSIST_DIR", "data/chroma_db"))
+
+		store = StructuredStore(db_path=store_path)
+		indexer = SemanticIndexer(
+			persist_directory=chroma_dir,
+			collection_name=collection_name,
+			chunk_size=1200,
+			chunk_overlap=120,
+		)
+		llm = OllamaLLM.from_env()
+		return cls(store=store, indexer=indexer, llm=llm)
 
 	def build_context(self, question: str, structured_limit: int = 5, semantic_limit: int = 5) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
 		structured_hits = self.store.search_mails(question, limit=structured_limit)

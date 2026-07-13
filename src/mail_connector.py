@@ -24,6 +24,16 @@ class MailSummary:
     attachment_count: int
 
 
+@dataclass
+class MailOperationResult:
+    action: str
+    uids: list[int]
+    dry_run: bool
+    folder: str
+    destination_folder: str | None = None
+    message: str = ""
+
+
 def _decode_mime_text(value: bytes | str | None) -> str:
     if value is None:
         return ""
@@ -190,6 +200,12 @@ class MailConnector:
         client.login(gmail_address, gmail_app_password)
         return client
 
+    def _normalize_uids(self, uids: list[int] | tuple[int, ...] | set[int]) -> list[int]:
+        normalized_uids = [int(uid) for uid in uids]
+        if not normalized_uids:
+            raise ValueError("Au moins un UID doit etre fourni.")
+        return normalized_uids
+
     def list_latest(self, limit: int = 10) -> list[MailSummary]:
         if limit <= 0:
             return []
@@ -205,6 +221,78 @@ class MailConnector:
             fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
 
         return self._build_summaries(fetched, latest_uids)
+
+    def archive_uids(
+        self,
+        uids: list[int] | tuple[int, ...] | set[int],
+        destination_folder: str = "Archive",
+        source_folder: str = "INBOX",
+        dry_run: bool = True,
+    ) -> MailOperationResult:
+        normalized_uids = self._normalize_uids(uids)
+
+        if dry_run:
+            return MailOperationResult(
+                action="archive",
+                uids=normalized_uids,
+                dry_run=True,
+                folder=source_folder,
+                destination_folder=destination_folder,
+                message=f"Simulation: les mails {normalized_uids} seraient archives vers {destination_folder}.",
+            )
+
+        with self._connect() as client:
+            client.select_folder(source_folder, readonly=False)
+            try:
+                client.create_folder(destination_folder)
+            except Exception:
+                pass
+
+            if hasattr(client, "move"):
+                client.move(normalized_uids, destination_folder)
+            else:
+                client.copy(normalized_uids, destination_folder)
+                client.delete_messages(normalized_uids)
+                client.expunge()
+
+        return MailOperationResult(
+            action="archive",
+            uids=normalized_uids,
+            dry_run=False,
+            folder=source_folder,
+            destination_folder=destination_folder,
+            message=f"Mails {normalized_uids} archives vers {destination_folder}.",
+        )
+
+    def delete_uids(
+        self,
+        uids: list[int] | tuple[int, ...] | set[int],
+        source_folder: str = "INBOX",
+        dry_run: bool = True,
+    ) -> MailOperationResult:
+        normalized_uids = self._normalize_uids(uids)
+
+        if dry_run:
+            return MailOperationResult(
+                action="delete",
+                uids=normalized_uids,
+                dry_run=True,
+                folder=source_folder,
+                message=f"Simulation: les mails {normalized_uids} seraient supprimes de {source_folder}.",
+            )
+
+        with self._connect() as client:
+            client.select_folder(source_folder, readonly=False)
+            client.delete_messages(normalized_uids)
+            client.expunge()
+
+        return MailOperationResult(
+            action="delete",
+            uids=normalized_uids,
+            dry_run=False,
+            folder=source_folder,
+            message=f"Mails {normalized_uids} supprimes de {source_folder}.",
+        )
 
     def _build_summaries(
         self, fetched: dict[Any, dict[Any, Any]], latest_uids: Iterable[int]

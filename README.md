@@ -29,7 +29,7 @@ Le rôle de ChromaDB est donc de mémoriser des vecteurs d'embeddings par morcea
 
 Ollama est le moteur IA local du projet. Il fournit deux choses differentes mais complementaires: les embeddings via `nomic-embed-text` pour ChromaDB, et le modele de langage `mistral` pour rediger la reponse finale. Tesseract, lui, sert uniquement a faire l'OCR sur les images et les scans; sans lui, les documents photographies ou numerises ne peuvent pas etre transformes en texte exploitable.
 
-En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, la recherche semantique est geree par `indexer.py`, puis `query_engine.py` orchestre les appels pour produire une reponse via `llm.py`, exposee ensuite dans la CLI et plus tard dans l'interface Streamlit.
+En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, la recherche semantique est geree par `indexer.py`, puis `query_engine.py` orchestre les appels pour produire une reponse via `llm.py`. Les actions de maintenance sont isolees dans `actions.py`, et la CLI expose les commandes `ask`, `archive` et `delete` avant de preparer l'interface Streamlit.
 
 ## Prealables (a faire avant le clone)
 
@@ -192,6 +192,8 @@ IMAP_FOLDER=INBOX
 LLM_MODEL=mistral
 OLLAMA_HOST=http://localhost:11434
 EMBEDDING_MODEL=nomic-embed-text
+MAIL_AI_DB_PATH=data/mail_ai.db
+CHROMA_PERSIST_DIR=data/chroma_db
 ```
 
 Variables prises en charge:
@@ -205,6 +207,8 @@ Variables prises en charge:
 - `LLM_MODEL`: modele de langage utilise pour la synthese des reponses (par defaut `mistral`)
 - `OLLAMA_HOST`: endpoint Ollama local (par defaut `http://localhost:11434`)
 - `EMBEDDING_MODEL`: modele d'embeddings utilise par Chroma (par defaut `nomic-embed-text`)
+- `MAIL_AI_DB_PATH`: chemin de la base SQLite locale (par defaut `data/mail_ai.db`)
+- `CHROMA_PERSIST_DIR`: dossier de persistence Chroma (par defaut `data/chroma_db`)
 
 Important:
 - ne committez jamais `.env`
@@ -402,6 +406,44 @@ Etape 6-7 OK: wrapper LLM + query engine valides.
 ```
 
 L'idée de cette étape est simple: SQLite apporte les faits précis, Chroma apporte le rapprochement sémantique, et Ollama rédige la réponse finale à partir de ces éléments. Tesseract, de son côté, ne sert qu'à l'OCR des images et des documents scannés.
+
+### 5.7) Étapes 8-9 - commandes `ask`, `archive` et `delete`
+
+Objectif:
+- `ask` interroge le moteur hybride et renvoie une réponse en français à partir des données locales.
+- `archive` déplace un ou plusieurs mails vers un dossier cible, avec simulation par défaut.
+- `delete` supprime définitivement un ou plusieurs mails, avec simulation par défaut et confirmation explicite avant exécution réelle.
+
+Commande de test:
+
+```bash
+python.exe tests/run_actions_examples.py
+```
+
+Sortie attendue (exemple):
+
+```text
+[OK] ask renvoie une réponse pertinente
+[OK] archive en simulation fonctionne
+[OK] archive en mode réel simulé par faux connecteur fonctionne
+[OK] delete en simulation fonctionne
+[OK] delete en mode réel simulé par faux connecteur fonctionne
+Etapes 8-9 OK: ask + archive + delete valides.
+```
+
+Exemples d'utilisation dans la CLI:
+
+```bash
+python.exe -m src.cli ask "Quel est l'historique du prix du gâteau au chocolat ?"
+python.exe -m src.cli archive 101 --dry-run
+python.exe -m src.cli archive 101 --no-dry-run --confirm
+python.exe -m src.cli delete 101 --dry-run
+python.exe -m src.cli delete 101 --no-dry-run --confirm
+```
+
+Règle de sécurité:
+- `archive` et `delete` restent en simulation tant que vous n'ajoutez pas `--no-dry-run`.
+- si vous retirez le mode simulation, la CLI vous demande une confirmation explicite avant d'agir.
 
 ## 6) Arborescence
 
