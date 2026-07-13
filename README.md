@@ -25,7 +25,7 @@ SQLite joue le role de colonne vertebrale factuelle du systeme. La base stocke d
 
 La couche vectorielle est utile pour la recherche de similarite semantique, mais elle ne remplace pas SQLite. Les deux couches sont combinees par le moteur de requete: SQLite apporte la precision structuree, Chroma apporte le rappel semantique, et le LLM formule la reponse finale uniquement a partir des resultats recuperes.
 
-Le role de ChromaDB est donc de memoriser des vecteurs d'embeddings par morceaux de texte (chunks) pour retrouver des contenus proches en sens, meme quand les mots exacts ne correspondent pas. Cette capacite est essentielle pour des questions comme "prix du gateau chocolat" ou "interactions avec Nam", ou le vocabulaire varie d'un mail a l'autre.
+Le rôle de ChromaDB est donc de mémoriser des vecteurs d'embeddings par morceaux de texte (chunks) pour retrouver des contenus proches en sens, même quand les mots exacts ne correspondent pas. Cette capacité est essentielle pour des questions comme « historique du prix du gâteau au chocolat », « résumé de mes interactions avec Julien » ou encore « évolution de mes échanges avec le service comptabilité », lorsque le vocabulaire varie d’un mail à l’autre.
 
 Ollama est le moteur IA local du projet. Il fournit deux choses differentes mais complementaires: les embeddings via `nomic-embed-text` pour ChromaDB, et le modele de langage `mistral` pour rediger la reponse finale. Tesseract, lui, sert uniquement a faire l'OCR sur les images et les scans; sans lui, les documents photographies ou numerises ne peuvent pas etre transformes en texte exploitable.
 
