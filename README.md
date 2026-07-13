@@ -407,6 +407,8 @@ Etape 6-7 OK: wrapper LLM + query engine valides.
 
 L'idée de cette étape est simple: SQLite apporte les faits précis, Chroma apporte le rapprochement sémantique, et Ollama rédige la réponse finale à partir de ces éléments. Tesseract, de son côté, ne sert qu'à l'OCR des images et des documents scannés.
 
+Remarque: la commande `ask` initialise automatiquement le schéma SQLite si la base n'existe pas encore. Elle ne plante donc plus sur une base vide, mais elle ne peut donner une réponse réellement utile que si des mails ont déjà été indexés dans SQLite et dans Chroma.
+
 ### 5.7) Étapes 8-9 - commandes `ask`, `archive` et `delete`
 
 Objectif:

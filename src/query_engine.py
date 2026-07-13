@@ -40,6 +40,7 @@ class QueryEngine:
 		chroma_dir = Path(chroma_path or os.getenv("CHROMA_PERSIST_DIR", "data/chroma_db"))
 
 		store = StructuredStore(db_path=store_path)
+		store.init_schema()
 		indexer = SemanticIndexer(
 			persist_directory=chroma_dir,
 			collection_name=collection_name,
