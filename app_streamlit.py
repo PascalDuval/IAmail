@@ -44,12 +44,13 @@ def _ask_safe(db_path: Path, chroma_path: Path, question: str) -> str:
     return engine.ask(question).answer
 
 
-def _ask_hybrid(db_path: Path, chroma_path: Path, question: str) -> str:
+def _ask_hybrid(db_path: Path, chroma_path: Path, question: str, semantic_backend: str) -> str:
     engine = QueryEngine.from_env(
         db_path=db_path,
         chroma_path=chroma_path,
         enable_semantic=True,
         enable_llm=True,
+        semantic_backend=semantic_backend,
     )
     return engine.ask(question).answer
 
@@ -71,6 +72,12 @@ def main() -> None:
             index=0,
             help="safe = SQLite uniquement; hybride = Chroma/Ollama, à utiliser seulement sur une machine stable.",
         )
+        hybrid_backend = st.selectbox(
+            "Backend hybride",
+            options=["sqlite-vector", "chroma"],
+            index=0,
+            help="sqlite-vector = Ollama + index vectoriel dans SQLite (recommande). chroma = historique/experimental.",
+        )
         question = st.text_area(
             "Question",
             value="Résumé des dernières offres d'emplois sur les derniers quinze jours",
@@ -80,7 +87,7 @@ def main() -> None:
     db_path = Path(db_path_value)
     chroma_path = Path(chroma_path_value)
 
-    tab_recent, tab_ask = st.tabs(["Derniers mails", "Question safe"])
+    tab_recent, tab_ask = st.tabs(["Derniers mails", "Question"])
 
     with tab_recent:
         st.subheader("INBOX / récents")
@@ -101,7 +108,10 @@ def main() -> None:
             st.warning("Ce mode n'utilise ni Chroma ni Ollama. Il évite les plantages liés au chemin hybride.")
         else:
             st.subheader("Réponse hybride expérimentale")
-            st.error("Ce mode réactive Chroma/Ollama. Sur cette machine, il a déjà provoqué des coupures brutales. N'utilisez-le qu'à vos risques.")
+            if hybrid_backend == "chroma":
+                st.error("Mode hybride + Chroma: risque élevé sur cette machine (coupures déjà observées).")
+            else:
+                st.warning("Mode hybride + sqlite-vector: plus léger que Chroma, mais reste expérimental sur cette machine.")
 
         button_label = "Interroger en mode safe" if mode == "safe" else "Interroger en mode hybride"
         if st.button(button_label, type="primary"):
@@ -112,7 +122,12 @@ def main() -> None:
                     if mode == "safe":
                         answer = _ask_safe(db_path=db_path, chroma_path=chroma_path, question=question)
                     else:
-                        answer = _ask_hybrid(db_path=db_path, chroma_path=chroma_path, question=question)
+                        answer = _ask_hybrid(
+                            db_path=db_path,
+                            chroma_path=chroma_path,
+                            question=question,
+                            semantic_backend=hybrid_backend,
+                        )
                 except Exception as exc:
                     st.error(f"Échec de l'interrogation: {exc}")
                 else:

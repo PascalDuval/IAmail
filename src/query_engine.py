@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from .indexer import SemanticIndexer
 from .llm import OllamaLLM
+from .sqlite_vector_indexer import SQLiteVectorIndexer
 from .structured_store import StructuredStore
 
 
@@ -25,7 +26,7 @@ class QueryEngine:
 	def __init__(
 		self,
 		store: StructuredStore,
-		indexer: SemanticIndexer | None,
+		indexer: Any | None,
 		llm: OllamaLLM | None,
 	) -> None:
 		self.store = store
@@ -40,6 +41,7 @@ class QueryEngine:
 		collection_name: str = "mail_chunks",
 		enable_semantic: bool = False,
 		enable_llm: bool = False,
+		semantic_backend: str = "sqlite-vector",
 	) -> "QueryEngine":
 		load_dotenv()
 
@@ -48,14 +50,27 @@ class QueryEngine:
 
 		store = StructuredStore(db_path=store_path)
 		store.init_schema()
-		indexer: SemanticIndexer | None = None
+		selected_backend = (semantic_backend or os.getenv("SEMANTIC_BACKEND", "sqlite-vector")).strip().lower()
+		indexer: Any | None = None
 		if enable_semantic:
-			indexer = SemanticIndexer(
-				persist_directory=chroma_dir,
-				collection_name=collection_name,
-				chunk_size=1200,
-				chunk_overlap=120,
-			)
+			if selected_backend == "chroma":
+				indexer = SemanticIndexer(
+					persist_directory=chroma_dir,
+					collection_name=collection_name,
+					chunk_size=1200,
+					chunk_overlap=120,
+				)
+			elif selected_backend == "sqlite-vector":
+				indexer = SQLiteVectorIndexer(
+					db_path=store_path,
+					collection_name=collection_name,
+					chunk_size=1200,
+					chunk_overlap=120,
+				)
+			else:
+				raise ValueError(
+					f"Backend semantique inconnu: {selected_backend}. Utiliser 'sqlite-vector' ou 'chroma'."
+				)
 		llm: OllamaLLM | None = OllamaLLM.from_env() if enable_llm else None
 		return cls(store=store, indexer=indexer, llm=llm)
 
@@ -111,7 +126,7 @@ class QueryEngine:
 		if not semantic_hits:
 			return "Aucun resultat semantique n'a ete trouve."
 
-		lines = ["Resultats semantiques (Chroma):"]
+		lines = ["Resultats semantiques (backend hybride):"]
 		for hit in semantic_hits:
 			snippet = str(hit.get("document", "")).replace("\n", " ").strip()
 			lines.append(

@@ -8,10 +8,11 @@ Important:
 
 Alternative a ChromaDB si vous cherchez surtout la stabilité:
 - SQLite FTS5 pour la recherche lexicale locale, très simple et robuste.
+- SQLite-vector (nouveau backend du projet) pour stocker les embeddings Ollama directement en SQLite, sans Chroma.
 - FAISS pour un index vectoriel local léger, si vous acceptez une gestion manuelle de la persistance.
 - sqlite-vss pour rester dans l'écosystème SQLite avec un moteur vectoriel embarqué.
 
-En pratique, la meilleure option pour éviter les plantages ici reste SQLite FTS5 ou le mode safe actuel. ChromaDB n'est pas forcément le problème unique: le chemin hybride dépend aussi d'Ollama et des embeddings.
+En pratique, la meilleure option pour éviter les plantages ici reste SQLite FTS5 ou le mode safe actuel. Si vous devez tenter un hybride, utilisez d'abord le backend sqlite-vector avant de tester Chroma.
 
 ## Architecture globale
 
@@ -24,12 +25,15 @@ flowchart LR
   EX --> SS[structured_store.py\nSQLite]
   EX --> IX[indexer.py\nchunks + embeddings]
   IX --> CH[(ChromaDB)]
+  EX --> SV[(SQLite Vector Index)]
   SS --> QE[query_engine.py]
   CH --> QE
+  SV --> QE
   QE --> LLM[llm.py\nOllama / Mistral]
   LLM --> CLI[CLI / Streamlit]
   EX --> TS[Tesseract OCR]
   IX --> OL[Ollama\nnomic-embed-text]
+  SV --> OL
 ```
 
 SQLite joue le role de colonne vertebrale factuelle du systeme. La base stocke des informations explicites et verifiables comme la date, l'expediteur, le sujet, le corps normalise, les pieces jointes et, ensuite, les entites extraites (montants, personnes, themes). Cette couche permet des filtres exacts, des tris temporels, des agregations et des tableaux, ce qui est indispensable pour repondre de maniere fiable aux questions metier sans hallucination.
@@ -110,11 +114,15 @@ Si PATH n'est pas disponible, definir dans `.env`:
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
-### 3) ChromaDB + embeddings (etape 5, optionnelle)
+### 3) Backends semantiques hybrides (etape 5, optionnelle)
 
-Il n'y a pas d'installeur systeme pour ChromaDB dans ce projet: la dependance Python est deja dans `requirements.txt`. En revanche, si vous activez cette étape, il faut avoir Ollama actif avec le modele d'embeddings `nomic-embed-text`, car Chroma stocke les vecteurs produits par ce modele. Sur cette machine, ce chemin est expérimental et non recommandé.
+Deux backends hybrides sont disponibles:
+- `sqlite-vector`: embeddings Ollama stockés dans SQLite (recommandé en premier test)
+- `chroma`: backend historique, plus risqué sur cette machine
 
-Si vous voulez éviter ChromaDB tout en gardant une recherche utile, privilégiez SQLite FTS5 ou FAISS. Cela réduit la surface de panne, mais vous perdez une partie du confort du pipeline hybride complet.
+Dans les deux cas, il faut Ollama actif avec `nomic-embed-text`.
+
+Si vous voulez éviter ChromaDB tout en gardant une recherche utile, privilégiez SQLite FTS5 ou sqlite-vector. Cela réduit la surface de panne tout en gardant un mode hybride possible.
 
 Verification rapide:
 
@@ -486,7 +494,13 @@ Par defaut, `sync` fonctionne en mode safe (SQLite uniquement, sans indexation C
 Pour activer explicitement l'indexation semantique:
 
 ```bash
-python.exe -m src.cli sync --folder INBOX --limit 50 --enable-indexing
+python.exe -m src.cli sync --folder INBOX --limit 50 --enable-indexing --index-backend sqlite-vector
+```
+
+Pour forcer le backend historique Chroma (non recommandé ici):
+
+```bash
+python.exe -m src.cli sync --folder INBOX --limit 50 --enable-indexing --index-backend chroma
 ```
 
 Note limites:
@@ -496,13 +510,14 @@ Résumé des modes:
 - `index`: lecture sûre des derniers mails, sans charges lourdes.
 - `sync` par défaut: enregistre dans SQLite et met à jour l'index FTS5 local, sans embeddings.
 - `ask` par défaut: réponse locale basée sur SQLite + index FTS5.
-- `--no-safe`: chemin hybride Chroma/Ollama, expérimental et à éviter si la machine plante.
+- `--no-safe`: chemin hybride Ollama + backend sémantique (`sqlite-vector` ou `chroma`), expérimental.
 
 Comment vérifier que le mode safe est bien indexé:
 
 ```bash
 python.exe -m src.cli sync --folder INBOX --limit 50
 python.exe -m src.cli ask "mails de Jeanne"
+python.exe -m src.cli ask "mails de Jeanne" --no-safe --semantic-backend sqlite-vector
 ```
 
 Si aucun résultat pertinent n'apparaît:
@@ -537,7 +552,7 @@ mailia-streamlit
 
 Dans l'interface, vous avez maintenant deux modes:
 - safe: SQLite uniquement, recommandé sur cette machine
-- hybride experimental: réactive Chroma/Ollama pour tester le rappel sémantique et les réponses générées localement
+- hybride experimental: réactive Ollama avec backend semantique sélectionnable (`sqlite-vector` ou `chroma`)
 
 Le mode safe est coché par défaut. Le mode hybride doit rester un test ponctuel, pas le fonctionnement quotidien.
 
@@ -545,6 +560,11 @@ Comportement attendu du mode safe Streamlit:
 - il interroge l'index FTS5 local de SQLite
 - il ne dépend pas de Chroma/Ollama
 - il évite la charge qui a déjà provoqué les coupures brutales sur cette machine
+
+Comportement attendu du mode hybride Streamlit:
+- backend par défaut: `sqlite-vector`
+- backend optionnel: `chroma`
+- si instabilité, revenir immédiatement sur `safe`
 
 Raccourci utile:
 - `streamlit run app_streamlit.py` lance l'interface locale directement depuis le dépôt.
@@ -626,10 +646,12 @@ Rappel:
 Ce qui est retenu ici:
 - SQLite comme base de confiance
 - Streamlit safe par défaut
-- Chroma/Ollama seulement en option expérimentale
+- Ollama + sqlite-vector comme option hybride prioritaire
+- Chroma comme option historique secondaire
 
 Ce qui est conseillé si vous voulez vraiment du vectoriel sans trop de risques:
 - tester SQLite FTS5 d'abord si la recherche lexicale suffit
+- tester sqlite-vector ensuite
 - tester FAISS ou sqlite-vss sur une machine stable avant de revenir à ChromaDB
 - ne pas interpréter l'extinction brutale comme un problème uniquement lié à l'UI Streamlit: le chemin hybride complet peut déclencher la panne
 

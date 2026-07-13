@@ -85,6 +85,11 @@ def sync(
         "--enable-indexing/--no-enable-indexing",
         help="Active l'indexation Chroma/Ollama. Desactive par defaut pour un mode safe (SQLite uniquement). Chemin experimental a n'utiliser que sur une machine stable.",
     ),
+    index_backend: str = typer.Option(
+        "sqlite-vector",
+        "--index-backend",
+        help="Backend d'index hybride: sqlite-vector (recommande) ou chroma.",
+    ),
     db_path: Path = typer.Option(Path("data/mail_ai.db"), "--db-path", help="Chemin de la base SQLite locale."),
     chroma_path: Path = typer.Option(Path("data/chroma_db"), "--chroma-path", help="Chemin de persistence Chroma."),
 ) -> None:
@@ -93,6 +98,7 @@ def sync(
         db_path=db_path,
         chroma_path=chroma_path,
         enable_indexing=enable_indexing,
+        index_backend=index_backend,
     )
 
     try:
@@ -107,6 +113,8 @@ def sync(
     console.print(f"[green]Chunks indexés:[/green] {summary.chunks_indexed}")
     if not enable_indexing:
         console.print("[yellow]Mode safe actif:[/yellow] indexation Chroma/Ollama desactivee.")
+    else:
+        console.print(f"[cyan]Backend d'index actif:[/cyan] {index_backend}")
 
 
 @app.command()
@@ -117,6 +125,11 @@ def ask(
         "--safe/--no-safe",
         help="Mode de secours SQLite-only par defaut. --no-safe active le chemin hybride experimental, a eviter si la machine plante.",
     ),
+    semantic_backend: str = typer.Option(
+        "sqlite-vector",
+        "--semantic-backend",
+        help="Backend semantique en mode hybride: sqlite-vector (recommande) ou chroma.",
+    ),
     db_path: Path = typer.Option(Path("data/mail_ai.db"), "--db-path", help="Chemin de la base SQLite locale."),
     chroma_path: Path = typer.Option(Path("data/chroma_db"), "--chroma-path", help="Chemin de persistence Chroma."),
 ) -> None:
@@ -126,6 +139,7 @@ def ask(
         chroma_path=chroma_path,
         enable_semantic=not safe,
         enable_llm=not safe,
+        semantic_backend=semantic_backend,
     )
 
     try:
@@ -137,6 +151,8 @@ def ask(
     console.print("[bold cyan]Question :[/bold cyan]", question)
     if safe:
         console.print("[yellow]Mode safe actif:[/yellow] aucune connexion Chroma/Ollama n'a ete utilisee.")
+    else:
+        console.print(f"[cyan]Mode hybride actif:[/cyan] backend semantique = {semantic_backend}")
     console.print("[bold green]Réponse :[/bold green]", result.answer)
 
 
