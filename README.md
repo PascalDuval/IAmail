@@ -14,6 +14,87 @@ Alternative a ChromaDB si vous cherchez surtout la stabilité:
 
 En pratique, la meilleure option pour éviter les plantages ici reste SQLite FTS5 ou le mode safe actuel. Si vous devez tenter un hybride, utilisez d'abord le backend sqlite-vector avant de tester Chroma.
 
+## Safe vs hybride experimental (important)
+
+Le projet expose deux modes qui n'ont pas le meme objectif:
+
+- `safe` (recommande):
+  - utilise uniquement SQLite local (mails + FTS5)
+  - n'utilise ni Chroma ni Ollama
+  - priorite a la stabilite machine
+  - reponse locale factuelle (recherche + synthese)
+
+- `hybride experimental`:
+  - combine recherche semantique (embeddings) + LLM local
+  - backend semantique possible: `sqlite-vector` ou `chroma`
+  - meilleur rappel semantique, mais charge CPU/RAM/IO plus elevee
+  - peut encore provoquer des plantages sur machine limite
+
+Resume pratique:
+- usage quotidien: `safe`
+- tests avances ponctuels: `hybride experimental` avec `sqlite-vector` en premier
+
+Regle d'execution stricte dans l'interface:
+- si `Mode de reponse = hybride experimental` et `Backend hybride = sqlite-vector`, alors la requete hybride est executee avec `sqlite-vector`
+- si `Mode de reponse = hybride experimental` et `Backend hybride = chroma`, alors la requete hybride est executee avec `chroma`
+- l'interface affiche le backend selectionne, puis la `Derniere execution: hybride + <backend>`
+- en cas d'erreur, le message inclut explicitement `backend=<valeur>` pour identifier la source du plantage
+
+Comportement de l'onglet `Question`:
+- en mode `safe`, la question se saisit dans l'onglet `Question` et la recherche se relance automatiquement a la touche `Entree`
+- en mode `hybride experimental`, l'execution se fait via le bouton `Interroger en mode hybride` (pas d'auto-run)
+- en haut de l'onglet, l'UI affiche le backend actif/selectionne pour que la source d'un crash soit visible immediatement
+
+## Pourquoi sqlite-vector peut aussi planter
+
+`sqlite-vector` reduit la complexite par rapport a Chroma, mais il ne supprime pas la cause principale des crashs: la charge locale Ollama + embeddings + generation.
+
+Sur une machine contrainte, ces facteurs peuvent provoquer une instabilite:
+- saturation RAM/CPU quand l'indexation semantique et la generation LLM se chevauchent
+- stockage local tres sollicite (base SQLite + chunks + logs)
+- modele trop lourd pour les ressources disponibles
+- trop de mails traites en une seule passe
+
+Donc: `sqlite-vector` est generalement plus stable que `chroma` ici, mais pas garanti 100% stable.
+
+## Plan anti-plantage recommande
+
+Appliquer ces regles dans cet ordre:
+
+1. Rester en `safe` pour la production locale.
+2. Pour un test hybride, utiliser seulement `sqlite-vector` (eviter `chroma`).
+3. Reduire la taille des lots IMAP pendant les sync:
+
+```powershell
+setx IMAP_FETCH_BATCH_SIZE 50
+```
+
+4. Reduire le volume teste (ex: 20 a 50 mails d'abord):
+
+```powershell
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m src.cli sync --folder INBOX --limit 30
+```
+
+5. Verifier qu'Ollama repond avant un test hybride:
+
+```powershell
+ollama list
+ollama run mistral "ping"
+```
+
+6. Si une instabilite apparait, revenir immediatement au mode `safe`.
+
+## Solution concrete si hybride plante encore
+
+Oui: la solution robuste est de separer les usages.
+
+- `safe` pour toutes les questions courantes (fiable, deja suffisant dans la plupart des cas)
+- `hybride experimental` seulement en session courte de test
+- backend prefere: `sqlite-vector`
+- ne pas lancer de grosses sync en meme temps qu'une requete hybride
+
+Si meme `sqlite-vector` plante regulierement sur cette machine, considerez l'hybride comme non supporte localement et gardez `safe` comme mode de reference.
+
 ## Architecture globale
 
 L'architecture du projet suit un pipeline local de bout en bout. Le connecteur IMAP lit les mails Gmail et leurs metadonnees, puis le module d'extraction transforme le contenu des pieces jointes (PDF, DOCX, images OCR) en texte exploitable. Par défaut, ce contenu alimente uniquement la couche structuree SQLite. La couche vectorielle ChromaDB et le moteur Ollama ne sont utilisés que si on les active explicitement, car ils ont déjà provoque des coupures brutales sur cette machine.
@@ -178,6 +259,55 @@ Si le paquet local a été installé:
 ```bash
 mailia-streamlit
 ```
+
+## Lancer Streamlit en 60 secondes (interface simple)
+
+Utilisez ces etapes exactes pour avoir une interface claire et compréhensible rapidement.
+
+1. Ouvrir un terminal dans le dossier du projet.
+2. Lancer Streamlit avec l'environnement recommande:
+
+```powershell
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m streamlit run app_streamlit.py
+```
+
+3. Ouvrir l'URL locale affichee par Streamlit:
+
+```text
+http://localhost:8501
+```
+
+4. Dans l'interface, faire simplement:
+- laisser `safe` active (mode recommande)
+- ouvrir `Derniers mails` pour verifier les donnees
+- ouvrir `Question`, poser une question en français
+
+Parcours minimal conseille:
+- `sync` d'abord pour alimenter SQLite
+- puis Streamlit en mode safe
+- hybrides seulement en test ponctuel
+
+Commandes minimales:
+
+```powershell
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m src.cli sync --folder INBOX --limit 50
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m streamlit run app_streamlit.py
+```
+
+Depannage rapide:
+- si `streamlit` manque, installez les dependances:
+
+```powershell
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m pip install -r requirements.txt
+```
+
+- si le port `8501` est occupe:
+
+```powershell
+C:/Users/karap/anaconda3/envs/LLMRag/python.exe -m streamlit run app_streamlit.py --server.port 8502
+```
+
+- si la machine devient instable en hybride: revenir immediatement au mode `safe`
 
 ## 0) Prérequis avant de cloner le repo
 
