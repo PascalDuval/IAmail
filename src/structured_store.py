@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -236,6 +237,81 @@ class StructuredStore:
 			).fetchall()
 			return [dict(row) for row in rows]
 
+	def get_all_mails(self) -> list[dict[str, Any]]:
+		with self._connect() as connection:
+			rows = connection.execute(
+				"""
+				SELECT
+					id,
+					uid,
+					folder,
+					subject,
+					sender,
+					recipients,
+					sent_at,
+					body_text,
+					body_size,
+					attachment_count
+				FROM mails
+				ORDER BY datetime(sent_at) DESC
+				"""
+			).fetchall()
+			return [dict(row) for row in rows]
+
+	def search_mails(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+		normalized_query = _normalize_text(query)
+		if not normalized_query:
+			return self.get_recent_mails(limit=limit)
+
+		tokens = [token for token in normalized_query.split() if len(token) > 2]
+		if not tokens:
+			return self.get_recent_mails(limit=limit)
+
+		matches: list[dict[str, Any]] = []
+		for mail in self.get_all_mails():
+			searchable_parts = [
+				mail.get("subject", ""),
+				mail.get("sender", ""),
+				mail.get("recipients", ""),
+				mail.get("body_text", ""),
+			]
+			searchable_text = _normalize_text(" ".join(str(part) for part in searchable_parts))
+
+			score = sum(1 for token in tokens if token in searchable_text)
+			if score > 0:
+				mail_with_score = dict(mail)
+				mail_with_score["score"] = score
+				matches.append(mail_with_score)
+
+		matches.sort(key=lambda item: (-int(item.get("score", 0)), str(item.get("sent_at", ""))), reverse=False)
+		return matches[:limit]
+
+	def get_mail_attachments(self, mail_id: int) -> list[dict[str, Any]]:
+		with self._connect() as connection:
+			rows = connection.execute(
+				"""
+				SELECT id, mail_id, filename, content_type, size_bytes, extracted_text
+				FROM attachments
+				WHERE mail_id = ?
+				ORDER BY id ASC
+				""",
+				(mail_id,),
+			).fetchall()
+			return [dict(row) for row in rows]
+
+	def get_mail_entities(self, mail_id: int) -> list[dict[str, Any]]:
+		with self._connect() as connection:
+			rows = connection.execute(
+				"""
+				SELECT id, mail_id, entity_type, entity_value, confidence, source
+				FROM entities
+				WHERE mail_id = ?
+				ORDER BY id ASC
+				""",
+				(mail_id,),
+			).fetchall()
+			return [dict(row) for row in rows]
+
 	def get_schema_overview(self) -> dict[str, str]:
 		with self._connect() as connection:
 			rows = connection.execute(
@@ -248,3 +324,9 @@ class StructuredStore:
 				"""
 			).fetchall()
 			return {str(row["name"]): str(row["sql"] or "") for row in rows}
+
+
+def _normalize_text(value: str) -> str:
+	normalized = unicodedata.normalize("NFKD", value)
+	without_accents = "".join(character for character in normalized if not unicodedata.combining(character))
+	return " ".join(without_accents.lower().split())

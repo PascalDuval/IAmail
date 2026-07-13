@@ -6,11 +6,28 @@ Ce projet Python indexe des emails Gmail et leurs pieces jointes pour permettre 
 
 L'architecture du projet suit un pipeline local de bout en bout. Le connecteur IMAP lit les mails Gmail et leurs metadonnees, puis le module d'extraction transforme le contenu des pieces jointes (PDF, DOCX, images OCR) en texte exploitable. Ce contenu est ensuite envoye dans deux couches complementaires: une couche structuree SQLite et une couche semantique vectorielle (ChromaDB, etape suivante).
 
+```mermaid
+flowchart LR
+  G[Gmail IMAP] --> MC[mail_connector.py]
+  MC --> EX[extractor.py]
+  EX --> SS[structured_store.py\nSQLite]
+  EX --> IX[indexer.py\nchunks + embeddings]
+  IX --> CH[(ChromaDB)]
+  SS --> QE[query_engine.py]
+  CH --> QE
+  QE --> LLM[llm.py\nOllama / Mistral]
+  LLM --> CLI[CLI / Streamlit]
+  EX --> TS[Tesseract OCR]
+  IX --> OL[Ollama\nnomic-embed-text]
+```
+
 SQLite joue le role de colonne vertebrale factuelle du systeme. La base stocke des informations explicites et verifiables comme la date, l'expediteur, le sujet, le corps normalise, les pieces jointes et, ensuite, les entites extraites (montants, personnes, themes). Cette couche permet des filtres exacts, des tris temporels, des agregations et des tableaux, ce qui est indispensable pour repondre de maniere fiable aux questions metier sans hallucination.
 
 La couche vectorielle est utile pour la recherche de similarite semantique, mais elle ne remplace pas SQLite. Les deux couches sont combinees par le moteur de requete: SQLite apporte la precision structuree, Chroma apporte le rappel semantique, et le LLM formule la reponse finale uniquement a partir des resultats recuperes.
 
 Le role de ChromaDB est donc de memoriser des vecteurs d'embeddings par morceaux de texte (chunks) pour retrouver des contenus proches en sens, meme quand les mots exacts ne correspondent pas. Cette capacite est essentielle pour des questions comme "prix du gateau chocolat" ou "interactions avec Nam", ou le vocabulaire varie d'un mail a l'autre.
+
+Ollama est le moteur IA local du projet. Il fournit deux choses differentes mais complementaires: les embeddings via `nomic-embed-text` pour ChromaDB, et le modele de langage `mistral` pour rediger la reponse finale. Tesseract, lui, sert uniquement a faire l'OCR sur les images et les scans; sans lui, les documents photographies ou numerises ne peuvent pas etre transformes en texte exploitable.
 
 En pratique, le flux complet est le suivant: Gmail IMAP alimente `mail_connector.py`, l'analyse de contenu passe par `extractor.py`, les faits sont persistes par `structured_store.py`, la recherche semantique est geree par `indexer.py`, puis `query_engine.py` orchestre les appels pour produire une reponse via `llm.py`, exposee ensuite dans la CLI et plus tard dans l'interface Streamlit.
 
@@ -69,6 +86,18 @@ ollama list
 
 Vous devez voir `nomic-embed-text:latest` dans la liste.
 
+### 4) Ollama pour les reponses LLM (etapes 6-7)
+
+Le modele de langage local utilise par le wrapper LLM est `mistral` par defaut. Il doit apparaitre dans `ollama list`, et le service Ollama doit rester actif pendant les tests du moteur de requete.
+
+Verification rapide:
+
+```powershell
+ollama list
+```
+
+Vous devez voir `mistral:latest` dans la liste.
+
 Regle generale d'execution:
 - toutes les commandes de ce README doivent etre lancees dans l'environnement virtuel active (`.venv`).
 - sur Windows, si besoin, utilisez explicitement `.\\.venv\\Scripts\\python.exe`.
@@ -84,7 +113,7 @@ Etat actuel:
 - commande CLI `index` pour afficher les 10 derniers mails de INBOX
 - round 2: affichage de la taille du corps texte et du nombre de pieces jointes
 
-## 0) Prerequis avant de cloner le repo
+## 0) Prérequis avant de cloner le repo
 
 Logiciels a installer:
 - Python 3.11+ (3.11 recommande)
@@ -160,6 +189,7 @@ IMAP_PORT=993
 IMAP_SSL=true
 IMAP_SSL_VERIFY=true
 IMAP_FOLDER=INBOX
+LLM_MODEL=mistral
 OLLAMA_HOST=http://localhost:11434
 EMBEDDING_MODEL=nomic-embed-text
 ```
@@ -172,6 +202,7 @@ Variables prises en charge:
 - `IMAP_SSL`: `true` ou `false`
 - `IMAP_SSL_VERIFY`: `true` ou `false` (laisser `true` sauf diagnostic local)
 - `IMAP_FOLDER`: dossier a lire (par defaut `INBOX`)
+- `LLM_MODEL`: modele de langage utilise pour la synthese des reponses (par defaut `mistral`)
 - `OLLAMA_HOST`: endpoint Ollama local (par defaut `http://localhost:11434`)
 - `EMBEDDING_MODEL`: modele d'embeddings utilise par Chroma (par defaut `nomic-embed-text`)
 
@@ -343,6 +374,34 @@ Sortie attendue (exemple):
 [OK] top resultat semantiquement pertinent
 Etape 5 OK: chunking + embeddings + persistance Chroma + requete semantique valides.
 ```
+
+### 5.6) Étapes 6-7 - wrapper LLM + moteur de requête
+
+Objectif:
+- interroger la couche structuree SQLite et la couche semantique Chroma en meme temps
+- construire un contexte a partir des resultats recuperes
+- faire formuler la reponse finale par le LLM local Ollama (`mistral`)
+
+Commande de test:
+
+```bash
+python.exe tests/run_query_engine_examples.py
+```
+
+Sortie attendue (exemple):
+
+```text
+[OK] mails indexes
+[OK] chunks indexes
+[OK] hits structurels disponibles
+[OK] hits semantiques disponibles
+[OK] reponse non vide
+[OK] reponse pertinente
+--- Reponse ---
+Etape 6-7 OK: wrapper LLM + query engine valides.
+```
+
+L'idée de cette étape est simple: SQLite apporte les faits précis, Chroma apporte le rapprochement sémantique, et Ollama rédige la réponse finale à partir de ces éléments. Tesseract, de son côté, ne sert qu'à l'OCR des images et des documents scannés.
 
 ## 6) Arborescence
 
