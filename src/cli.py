@@ -9,6 +9,7 @@ from rich.table import Table
 
 from .actions import MailActions
 from .mail_connector import MailConnector
+from .ingestion import IngestionService
 from .query_engine import QueryEngine
 
 app = typer.Typer(help="CLI du projet Mail IA Agent")
@@ -68,6 +69,35 @@ def index(
         )
 
     console.print(table)
+
+
+@app.command()
+def sync(
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        "-n",
+        min=1,
+        max=500,
+        help="Nombre de mails les plus recents à ingérer depuis la boîte principale.",
+    ),
+    folder: str = typer.Option("INBOX", "--folder", "-f", help="Dossier Gmail à synchroniser."),
+    db_path: Path = typer.Option(Path("data/mail_ai.db"), "--db-path", help="Chemin de la base SQLite locale."),
+    chroma_path: Path = typer.Option(Path("data/chroma_db"), "--chroma-path", help="Chemin de persistence Chroma."),
+) -> None:
+    """Synchronise la boîte principale vers SQLite et Chroma avant d'utiliser ask."""
+    service = IngestionService.from_env(db_path=db_path, chroma_path=chroma_path)
+
+    try:
+        summary = service.sync_folder(folder=folder, limit=limit)
+    except Exception as exc:
+        console.print(f"[red]Erreur lors de la synchronisation:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"[green]Boîte synchronisée:[/green] {summary.folder}")
+    console.print(f"[green]Mails récupérés:[/green] {summary.fetched}")
+    console.print(f"[green]Mails enregistrés:[/green] {summary.stored}")
+    console.print(f"[green]Chunks indexés:[/green] {summary.chunks_indexed}")
 
 
 @app.command()

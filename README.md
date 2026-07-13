@@ -409,6 +409,14 @@ L'idée de cette étape est simple: SQLite apporte les faits précis, Chroma app
 
 Remarque: la commande `ask` initialise automatiquement le schéma SQLite si la base n'existe pas encore. Elle ne plante donc plus sur une base vide, mais elle ne peut donner une réponse réellement utile que si des mails ont déjà été indexés dans SQLite et dans Chroma.
 
+Avant d'utiliser `ask` sur la boîte principale, lancez d'abord la synchronisation locale de l'INBOX:
+
+```bash
+python.exe -m src.cli sync --folder INBOX --limit 50
+```
+
+Cette étape alimente réellement SQLite et Chroma avec les mails de la boîte principale. Le simple affichage des messages via `index` ne suffit pas: il faut une synchronisation explicite pour rendre les données interrogables par `ask`.
+
 ### 5.7) Étapes 8-9 - commandes `ask`, `archive` et `delete`
 
 Objectif:

@@ -13,6 +13,8 @@ import certifi
 from dotenv import load_dotenv
 from imapclient import IMAPClient
 
+from .structured_store import MailRecord
+
 
 @dataclass
 class MailSummary:
@@ -70,6 +72,31 @@ def _extract_sender(sender_item: Any) -> str:
     if name:
         return name
     return "(inconnu)"
+
+
+def _extract_recipients(envelope: Any) -> str:
+    recipient_parts: list[str] = []
+    for field_name in ("to_", "cc", "bcc"):
+        recipients = getattr(envelope, field_name, None) or []
+        for recipient in recipients:
+            name = _decode_mime_text(getattr(recipient, "name", None))
+            mailbox = _decode_mime_text(getattr(recipient, "mailbox", None))
+            host = _decode_mime_text(getattr(recipient, "host", None))
+
+            address = ""
+            if mailbox and host:
+                address = f"{mailbox}@{host}"
+            elif mailbox:
+                address = mailbox
+
+            if name and address:
+                recipient_parts.append(f"{name} <{address}>")
+            elif address:
+                recipient_parts.append(address)
+            elif name:
+                recipient_parts.append(name)
+
+    return ", ".join(dict.fromkeys(recipient_parts))
 
 
 def _get_payload_value(payload: dict[Any, Any], key: str) -> Any:
@@ -221,6 +248,64 @@ class MailConnector:
             fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
 
         return self._build_summaries(fetched, latest_uids)
+
+    def fetch_latest_mail_records(self, limit: int = 50, folder: str = "INBOX") -> list[MailRecord]:
+        if limit <= 0:
+            return []
+
+        with self._connect() as client:
+            client.select_folder(folder, readonly=True)
+            uids = client.search(["ALL"])
+
+            if not uids:
+                return []
+
+            latest_uids = sorted(uids)[-limit:]
+            fetched = client.fetch(latest_uids, ["ENVELOPE", "BODY.PEEK[]"])
+
+        records: list[MailRecord] = []
+        for uid in sorted(latest_uids, reverse=True):
+            payload = fetched.get(uid, {})
+            envelope = _get_payload_value(payload, "ENVELOPE")
+            if envelope is None:
+                continue
+
+            raw_message = _get_first_payload_value(
+                payload,
+                ["BODY[]", "BODY.PEEK[]", "RFC822"],
+            )
+
+            body_text = ""
+            attachment_count = 0
+            if isinstance(raw_message, bytes):
+                body_text, attachment_count = _extract_body_and_attachment_count(raw_message)
+
+            subject = _decode_mime_text(getattr(envelope, "subject", None)) or "(sans objet)"
+            sender_list = getattr(envelope, "from_", None) or []
+            sender = _extract_sender(sender_list[0] if sender_list else None)
+            recipients = _extract_recipients(envelope)
+            date_value = getattr(envelope, "date", None)
+            if isinstance(date_value, datetime):
+                date_string = date_value.isoformat()
+            else:
+                date_string = _decode_mime_text(date_value) or ""
+
+            records.append(
+                MailRecord(
+                    uid=int(uid),
+                    folder=folder,
+                    subject=subject,
+                    sender=sender,
+                    recipients=recipients,
+                    date=date_string,
+                    body_text=body_text,
+                    body_size=len(body_text),
+                    attachment_count=attachment_count,
+                    message_id=_decode_mime_text(getattr(envelope, "message_id", None)) or None,
+                )
+            )
+
+        return records
 
     def archive_uids(
         self,

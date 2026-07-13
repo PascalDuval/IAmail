@@ -63,6 +63,19 @@ class QueryEngine:
 
 	def ask(self, question: str) -> QueryResult:
 		structured_hits, semantic_hits, context = self.build_context(question)
+		if not structured_hits and not semantic_hits:
+			answer = (
+				"Aucune donnée indexée n'est encore disponible dans SQLite ni dans Chroma. "
+				"Lancez d'abord `python.exe -m src.cli sync --folder INBOX` pour charger la boîte principale, "
+				"puis relancez `ask`."
+			)
+			return QueryResult(
+				question=question,
+				answer=answer,
+				structured_hits=[],
+				semantic_hits=[],
+				context=context,
+			)
 		answer = self.llm.generate_answer(question=question, context=context)
 		return QueryResult(
 			question=question,
